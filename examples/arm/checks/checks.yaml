@@ -1,0 +1,13 @@
+# Симуляция механизма «рука», сценарий «перенос» (с грузом).
+- id: рука.приводы
+  use: sim_drive
+  args: {mechanism: рука, scenario: перенос, margin: 1.2}
+- id: рука.слежение
+  use: sim_tracking
+  args: {mechanism: рука, scenario: перенос, max_error: 2.0}
+- id: рука.основание
+  use: sim_base
+  args: {mechanism: рука, scenario: перенос, min_margin_mm: 5.0}
+- id: рука.задевания
+  use: sim_clearance
+  args: {mechanism: рука, scenario: перенос}

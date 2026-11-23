@@ -1,0 +1,25 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
+<style>body{margin:0;background:#15161a;color:#ddd;font:13px system-ui}
+#term{height:70vh}#gl{padding:8px;font-family:monospace;font-size:12px;white-space:pre-wrap}</style>
+</head><body>
+<div id="term"></div><div id="gl">проверяю GL…</div>
+<script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script>
+const term = new Terminal({ fontSize: 12, theme: { background: '#15161a' }, convertEol: true });
+term.open(document.getElementById('term'));
+term.writeln('\x1b[36mDatum — шип терминала\x1b[0m');
+window.spike.onPty(d => term.write(d));
+
+const c = document.createElement('canvas');
+const gl = c.getContext('webgl2');
+let info = { webgl2: !!gl };
+if (gl) {
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  info.renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'n/a';
+  info.version = gl.getParameter(gl.VERSION);
+  info.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+}
+document.getElementById('gl').textContent = JSON.stringify(info, null, 2);
+window.spike.reportGL(info);
+</script></body></html>

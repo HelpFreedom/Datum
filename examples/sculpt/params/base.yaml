@@ -1,0 +1,17 @@
+# Подставка под шар: скульптура полем на сетке (datum.geom.field). Пример
+# того порядка, что проверен печатью на подставке под мышь:
+# форма → предел уклона → переизмерение → узор → гнездо.
+
+BALL_D:   {value: 40.0, unit: mm, provenance: chosen, reason: "шар Ø40 — пример; для своего предмета — замер"}
+SEAT_GAP: {value: 0.4, unit: mm, provenance: chosen, reason: "зазор гнезда: шар кладут, а не вдавливают"}
+SEAT_DEPTH: {value: 0.30, unit: "", provenance: chosen, reason: "доля диаметра шара, утопленная в гнездо"}
+
+BASE_W:   {value: 56.0, unit: mm, provenance: chosen, reason: "основание: устойчивость шара в 2.5 раза ниже центра"}
+NECK_D:   {value: 22.0, unit: mm, provenance: chosen, reason: "шейка — самое тонкое место силуэта"}
+HEIGHT:   {value: 46.0, unit: mm, provenance: chosen, reason: "высота до кромки гнезда"}
+RIM_WALL: {value: 3.0, unit: mm, provenance: chosen, reason: "кромка чаши вокруг отверстия гнезда: без неё шар срезал бы её в лезвие"}
+
+PATTERN_PERIOD: {value: 9.0, unit: mm, provenance: chosen, reason: "шаг ромбов диагрида"}
+PATTERN_DEPTH:  {value: 0.8, unit: mm, provenance: chosen, reason: "глубина «чешуи»: две стенки по 0.4 остаются под ней"}
+
+FIELD_H:  {value: 0.5, unit: mm, provenance: chosen, reason: "шаг сетки поля; черновик берёт 1.2 сам (draft())"}

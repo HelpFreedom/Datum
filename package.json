@@ -1,0 +1,47 @@
+{
+  "name": "datum",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Инструмент проектирования и прототипирования для 3D-печати в паре с ИИ",
+  "scripts": {
+    "start": "electron apps/shell/dist/main/main.js",
+    "build": "npm run build:ui && npm run build:shell",
+    "build:ui": "vite build --config apps/ui/vite.config.ts",
+    "build:shell": "tsc -p apps/shell/tsconfig.json",
+    "watch:ui": "vite build --watch --config apps/ui/vite.config.ts",
+    "typecheck": "tsc --noEmit -p apps/ui/tsconfig.json && tsc --noEmit -p apps/shell/tsconfig.json",
+    "spike": "electron scripts/spike/main.cjs",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "test:ui": "vitest run --root apps/ui",
+    "test": "npm run typecheck && npm run test:ui && npm run test:shell",
+    "test:shell": "vitest run --root apps/shell"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.186.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.4.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "^1.47.0",
+    "node-pty": "^1.1.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "three": "^0.186.0",
+    "zustand": "^5.0.15"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "node-pty@1.1.0": true
+  }
+}

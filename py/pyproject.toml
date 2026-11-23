@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datum"
+version = "0.1.0"
+description = "Инструмент проектирования и прототипирования для 3D-печати в паре с ИИ"
+requires-python = ">=3.11"
+dependencies = [
+    "manifold3d>=3.5,<4",
+    "trimesh>=5.1,<6",
+    "shapely>=2.1,<3",
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "networkx>=3",
+    "rtree>=1.3",
+    "pillow>=10",
+    "lib3mf>=2.5",
+    "lxml>=5",
+    "pydantic>=2.9,<3",
+    "typing-extensions>=4.12",
+    "pyyaml>=6",
+    # Решатель упругости: чистый Python поверх numpy/scipy, 178 КБ. Нужен
+    # проверкам `flexure_force_fem` и `insertion_force`, то есть входит в
+    # каталог — значит не опция.
+    "scikit-fem>=10,<13",
+    # Контуры букв для надписей на деталях (`geom/text.py`): чистый Python,
+    # MIT. Pillow рисует буквы только картинкой, без контуров.
+    "fonttools>=4.50,<5",
+    # Набор надписи — HarfBuzz (Apache-2.0, внутри HarfBuzz — Old MIT): пары
+    # кернинга из таблиц шрифта (GPOS/kern). Колёса без зависимостей под все
+    # платформы; версия — в ключе кеша (`engine_digest`): от неё зависит форма.
+    "uharfbuzz>=0.57,<0.58",
+]
+
+[project.optional-dependencies]
+# watchfiles — наблюдение за файлами проекта (правки из редактора видны окну).
+# Приходил и так вместе с uvicorn[standard], но раз сервер импортирует его сам,
+# зависимость объявлена явно.
+server = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "websockets>=13",
+          "watchfiles>=0.21"]
+mcp    = ["mcp>=1.2"]
+brep   = ["build123d>=0.11", "cadquery-ocp-novtk>=7.9"]
+# Тетраэдральная сетка произвольного тела (fTetWild). Опция: без неё МКЭ
+# считает только призматический брус, и `tetmesh` честно говорит, что мешера
+# нет. ВАЖНО: pyvista ставить НЕ НАДО, хотя пакет объявляет его в своих
+# зависимостях — он тянет VTK на 639 МБ, а самому мешеру VTK не нужен.
+#
+# pypardiso — PARDISO из Intel MKL для МКЭ (`fem.solve.spd_factor`, решение владельца
+# 2026-11-08): на плече руки 1.3 с против 12.5 у SuperLU, а систему в 520 тыс.
+# неизвестных SuperLU не решил вовсе. MKL — закрытая бесплатная (Intel Simplified
+# Software License), ~700 МБ; без неё Datum честно возвращается к SuperLU. Замеры
+# и почему не GPU — docs/gpu.md.
+# Колёса MKL есть только под x86-64 Linux и Windows — на остальных PARDISO нет.
+mesh   = ["pytetwild>=0.4,<1",
+          "pypardiso>=0.4.7,<1; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')"]
+# Симуляция механизмов (datum.sim). mujoco-core, а не mujoco: с 4.0 пакет
+# разделён, и mujoco тянет ещё и mujoco-studio (просмотрщик с окном), Datum он
+# не нужен. Импортирует его только datum/sim/model.py.
+sim    = ["mujoco-core>=4.0,<5"]
+# pip-audit нужен scripts/audit.py: без него опись зависимостей честно
+# скажет «НЕ ПРОВЕРЕНО», но половины отчёта не будет.
+dev    = ["pytest>=8", "pytest-asyncio>=0.24", "pip-tools>=7", "httpx>=0.27",
+          "pip-audit>=2.7"]
+
+[project.scripts]
+datum = "datum.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["datum*"]
+
+# Встроенные шрифты надписей (DejaVu Sans) — данные пакета, не модуль.
+[tool.setuptools.package-data]
+datum = ["assets/fonts/*"]

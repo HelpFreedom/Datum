@@ -1,0 +1,27 @@
+# Компоновка
+BASE_W:   {value: 130.0, unit: mm, provenance: chosen, reason: "опора на столе: шире — устойчивее"}
+BASE_T:   {value: 10.0, unit: mm, provenance: chosen, reason: "плита основания"}
+TOWER_H:  {value: 70.0, unit: mm, provenance: chosen, reason: "ось плеча над столом"}
+L1:       {value: 110.0, unit: mm, provenance: chosen, reason: "плечо: ось плеча — ось локтя"}
+L2:       {value: 90.0, unit: mm, provenance: chosen, reason: "предплечье: ось локтя — захват"}
+LINK_W:   {value: 22.0, unit: mm, provenance: chosen, reason: "сечение звена"}
+
+# Покупное
+SERVO_G:
+  value: 55.0
+  unit: g
+  provenance: standard
+  ref: "Waveshare ST3215: 55 г по карточке"
+SERVO_T:
+  value: 1.5
+  unit: ""
+  provenance: assumed
+  range: [1.0, 2.9]
+  reason: "длительный момент ST3215, Н·м: пусковой 2.94 (30 кг·см), рабочий — половина; паспорт длительного не даёт"
+  measure_hint: "груз на рычаге 100 мм до остановки, сервы на 12 В"
+BALLAST_G:
+  value: 250.0
+  unit: g
+  provenance: chosen
+  reason: "шайбы M10 в кармане основания: без них рука с грузом опрокидывается (sim_base)"
+LOAD_G:   {value: 100.0, unit: g, provenance: chosen, reason: "груз в захвате"}

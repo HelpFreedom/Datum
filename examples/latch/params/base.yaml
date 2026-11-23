@@ -1,0 +1,61 @@
+CASE_W:  {value: 60.0, unit: mm, provenance: chosen, reason: "ширина под плату"}
+CASE_D:  {value: 40.0, unit: mm, provenance: chosen, reason: "глубина под плату"}
+CASE_H:  {value: 20.0, unit: mm, provenance: chosen, reason: "высота корпуса"}
+
+NOZZLE:  {value: 0.4, unit: mm, provenance: standard, ref: "сопло Elegoo CC2"}
+WALL:    {provenance: derived, expr: "5 * NOZZLE", unit: mm}
+FLOOR:   {provenance: derived, expr: "WALL", unit: mm}
+
+GAP:     {value: 0.30, unit: mm, provenance: chosen,
+          reason: "скользящая посадка по правилам мастерской (0.2…0.3)"}
+
+# Единственное угаданное число: глубина удерживающей губки.
+LIP_D:
+  value: 0.8
+  unit: mm
+  provenance: assumed
+  range: [0.3, 1.5]
+  reason: "срисовано с фотографии похожего корпуса, не мерено"
+  measure_hint: "штангенциркулем по торцу проёма, в трёх местах"
+  blocking: true
+
+LIP_H:   {value: 3.0, unit: mm, provenance: chosen, reason: "высота губки"}
+
+# Заходная фаска на проёме. БЕЗ НЕЁ ЗАЩЁЛКА НЕ СОБИРАЕТСЯ: губка становится
+# прямой ступенькой, а жёсткая крышка прямую ступеньку не проходит — усилие
+# вставки не определено вовсе. Нашла это проверка усилия вставки, объёмная
+# проверка продавливания говорила «в допуске».
+# Наклон получается LIP_D/LEAD_IN = 0.8/1.2 = 0.67, то есть около 34°.
+LEAD_IN: {value: 1.2, unit: mm, provenance: chosen,
+          reason: "высота заходной фаски: скос около 34° при губке 0.8"}
+LID_T:   {value: 3.0, unit: mm, provenance: chosen, reason: "толщина крышки"}
+LID_Z:   {provenance: derived, expr: "CASE_H - LIP_H - GAP", unit: mm}
+
+# Модуль упругости печатного PLA. Не мерен на этом принтере: зависит от
+# ориентации слоёв вдвое, от партии — заметно. Объявлен угаданным с диапазоном,
+# чтобы развёртка по неизмеренному показала, на что он влияет.
+E_PLA:
+  value: 2000.0
+  unit: MPa
+  provenance: assumed
+  range: [1500.0, 3500.0]
+  reason: "печатный PLA вдоль слоёв 2000…3500 МПа, поперёк заметно меньше"
+  measure_hint: "напечатать и согнуть купон 60×10×2, замерить силу на прогибе 5 мм"
+
+# Трение и Пуассон — свойства пары и материала, как и модуль упругости. Раньше
+# усилие вставки брало трение 0.3 из кода проверки, и развёртка по
+# неизмеренному о нём не знала.
+FRICTION:
+  value: 0.3
+  unit: ""
+  provenance: assumed
+  range: [0.2, 0.4]
+  reason: "трение PLA по PLA на кромке губки: зависит от слоёв и того, обкаталась ли кромка"
+  measure_hint: "положить крышку на корпус, наклонять до сползания: μ — тангенс угла"
+
+POISSON_PLA:
+  value: 0.35
+  unit: ""
+  provenance: assumed
+  range: [0.33, 0.38]
+  reason: "коэффициент Пуассона PLA по справочникам; у печатного зависит от слоёв"

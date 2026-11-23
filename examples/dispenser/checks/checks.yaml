@@ -1,0 +1,181 @@
+# Набор проверок здесь СОВСЕМ ДРУГОЙ, чем в latch, и ради этого проект и
+# портирован. Там всё держалось на зацепах и посадках; тут — на аналитике:
+# сломается ли лист, хватит ли силы закрыть шибер, не опрокинется ли башня.
+
+# ------------------------------------------------------------- аналитика
+- id: флексура.деформация
+  use: beam_strain
+  args:
+    length: "${params.LEAF_L}"
+    thickness: "${params.LEAF_T}"
+    deflection: "${expr: STROKE_MAX + FLEX_PRELOAD}"
+    limit: "${params.EPS_LIM_PLA}"
+    mode: guided
+    name: флексура
+  severity: blocking
+
+- id: флексура.сила_возврата
+  use: flexure_force
+  args:
+    leaves: "${params.LEAF_N}"
+    length: "${params.LEAF_L}"
+    width: "${params.LEAF_B}"
+    thickness: "${params.LEAF_T}"
+    modulus: "${params.E_PLA}"
+    deflection: "${params.FLEX_PRELOAD}"
+    min_force: 1.0
+    name: флексура
+  severity: blocking
+
+- id: флексура.сила_нажатия
+  use: flexure_force
+  args:
+    leaves: "${params.LEAF_N}"
+    length: "${params.LEAF_L}"
+    width: "${params.LEAF_B}"
+    thickness: "${params.LEAF_T}"
+    modulus: "${params.E_PLA}"
+    deflection: "${expr: STROKE_MAX + FLEX_PRELOAD}"
+    max_force: 12.0
+    name: флексура_на_ходе
+
+# Самая тонкая из всех: в оригинале выходило 0.61 Н при нужных 0.6, и скрипт
+# печатал ровное OK. Здесь видно, что запас — полтора процента.
+- id: шибер.закрытие
+  use: cam_force
+  args:
+    force: "${expr: LEAF_N * 12 * E_PETG * (LEAF_B * LEAF_T ** 3 / 12) / LEAF_L ** 3 * FLEX_PRELOAD}"
+    rise: "${params.SLIDE_TRAVEL}"
+    run: "${params.SHUTTER_OPEN_STROKE}"
+    friction_deg: "${params.FRICTION_DEG}"
+    min_out: 0.6
+    name: шибер
+  severity: blocking
+
+- id: тяга.устойчивость
+  use: euler_buckling
+  args:
+    length: "${params.ROD_L}"
+    width: "${params.ROD_W}"
+    thickness: "${params.ROD_T}"
+    modulus: "${params.E_PLA}"
+    load: 1.0
+    ends: pinned
+    safety: 3.0
+    name: тяга
+
+- id: основание.масса
+  use: mass_estimate
+  args:
+    part: "@основание"
+    density: "${params.DENSITY_PLA}"
+    fill: "${params.FILL_FRAC}"
+    max_g: 120.0
+
+- id: основание.опора
+  use: com_support_margin
+  args:
+    part: "@основание"
+    base_z: 0.0
+    min_margin: 20.0
+
+- id: основание.опрокидывание
+  use: tipping_margin
+  args:
+    part: "@основание"
+    mass_g: "${params.DEVICE_MASS_G}"
+    push_n: "${params.PRESS_N}"
+    push_z: "${params.SADDLE_Z}"
+    lateral_frac: "${params.LATERAL_FRAC}"
+    min_ratio: 1.5
+  severity: blocking
+
+# -------------------------------------------------------------- геометрия
+- id: шибер.ход
+  use: travel_sweep
+  args:
+    build: "@шибер"
+    others: ["@пол"]
+    u_range: [0.0, 6.0]
+    samples: 13
+    max_inter_vol: 0.05
+    id: шибер.ход
+    title: Шибер ходит, не задевая пол
+
+- id: шибер.целостность
+  use: single_body
+  args: {part: "@шибер"}
+
+- id: пол.целостность
+  use: single_body
+  args: {part: "@пол"}
+
+- id: флексура.целостность
+  use: single_body
+  args: {part: "@флексура"}
+
+- id: пол.без_пузырей
+  use: no_sealed_void
+  args: {part: "@пол"}
+
+- id: основание.на_столе
+  use: bbox_fits
+  args: {part: "@основание"}
+
+- id: флексура.на_столе
+  use: bbox_fits
+  args: {part: "@флексура"}
+
+# Та же сила, посчитанная НЕЗАВИСИМО — трёхмерным решателем вместо формулы.
+# Смысл не в лишнем числе, а в сверке: у двух способов разные допущения, и
+# расхождение между ними само по себе находка.
+#
+# Она и нашлась при первом прогоне. Формула считает лист БАЛКОЙ, а лист
+# шириной в 18 толщин работает как ПЛАСТИНА: поперечная кривизна стеснена,
+# и он жёстче. МКЭ даёт 1.95…1.98 Н против 1.89 по формуле — на 3…5 % больше.
+# Порог 1.0 Н это не переворачивает, но знать об этом стоит: там, где запас
+# был полтора процента, такая поправка решает.
+- id: флексура.сила_мкэ
+  use: flexure_force_fem
+  args:
+    leaves: "${params.LEAF_N}"
+    length: "${params.LEAF_L}"
+    width: "${params.LEAF_B}"
+    thickness: "${params.LEAF_T}"
+    modulus: "${params.E_PLA}"
+    poisson: "${params.POISSON_PLA}"
+    deflection: "${params.FLEX_PRELOAD}"
+    min_force: 1.0
+    name: флексура
+  severity: info
+
+# --------------------------------------------------------------- печатность
+# Ориентация печати объявлена У ДЕТАЛЕЙ (`@part(print_up=...)`), и проверки
+# берут её оттуда. Без неё числа были бы про СБОРОЧНОЕ положение: флексура
+# стоймя требовала 54778 мм³ поддержек, на боку — ноль.
+
+- id: основание.мосты
+  use: bridge_span
+  args: {part: "@основание", max_span: 30.0, step: 0.5}
+  severity: blocking
+
+- id: основание.прилипание
+  use: bed_contact
+  args: {part: "@основание", min_area: 2000.0}
+
+# Флексура печатается НА БОКУ: листы ложатся на стол, слои идут вдоль листа, и
+# поддержки не нужны вовсе. Стоймя их было бы вдвое больше объёма самой детали.
+- id: флексура.поддержки
+  use: support_volume
+  args: {part: "@флексура", max_volume: 500.0, step: 0.5}
+
+- id: флексура.прилипание
+  use: bed_contact
+  args: {part: "@флексура", min_area: 500.0}
+
+# Шибер печатается НА РЕБРЕ, и горизонтальным в этой позе оказывается окно.
+# Круглым оно требовало поддержек под свод; каплей — нет. Растр мелкий:
+# окно Ø5, и при шаге 0.5 свод укладывался бы в две-три ячейки.
+- id: шибер.поддержки
+  use: support_volume
+  args: {part: "@шибер", max_volume: 1.0, step: 0.25}

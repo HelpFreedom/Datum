@@ -1,0 +1,32 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+# node
+node_modules/
+dist/
+dist-electron/
+out/
+# datum
+.datum/
+examples/*/output/
+examples/*/.datum/
+# прочее
+.DS_Store
+*.log
+scratch/
+
+# fTetWild пишет это в текущий каталог при каждом построении сетки.
+# `tet_mesh` за ним убирает, но при падении посреди работы файл остаётся.
+__tracked_surface.stl
+
+# Привязано к машине: путь к интерпретатору. Своё — `make mcp` (корень) или
+# `datum init` (проект).
+.mcp.json
+# Личные настройки Claude Code.
+.claude/settings.local.json
+# Резервные копии.
+*.bak
+*.bak-*

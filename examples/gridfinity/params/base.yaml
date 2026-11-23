@@ -1,0 +1,12 @@
+# Ящик под сетку Gridfinity и плита под него. Размеры сетки заданы
+# спецификацией (шаг 42 мм, единица высоты 7 мм) и живут в
+# datum.std.gridfinity; здесь — только выбор: сколько ячеек и отсеков.
+
+GRID_X: {value: 3, unit: шт, provenance: chosen, reason: "ячеек по X: ящик 125.5 мм"}
+GRID_Y: {value: 2, unit: шт, provenance: chosen, reason: "ячеек по Y: ящик 83.5 мм"}
+UNITS:  {value: 6, unit: шт, provenance: chosen, reason: "высота 6 × 7 = 42 мм плюс губка"}
+COLS:   {value: 3, unit: шт, provenance: chosen, reason: "отсеков по X"}
+ROWS:   {value: 2, unit: шт, provenance: chosen, reason: "отсеков по Y"}
+
+NOZZLE: {value: 0.4, unit: mm, provenance: standard, ref: "сопло принтера"}
+WALL:   {provenance: derived, expr: "4 * NOZZLE", unit: mm}

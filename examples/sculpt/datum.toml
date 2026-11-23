@@ -1,0 +1,14 @@
+schema = 1
+name = "sculpt"
+units = "mm"
+
+# Принтер. Проверки печатности берут стол и слой отсюда.
+[printer]
+profile = "elegoo-cc2-0.4"
+bed = [256, 256, 256]
+nozzle = 0.4
+layer = 0.20
+material = "PLA"
+
+[build]
+guard = "checkpoint"

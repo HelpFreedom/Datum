@@ -1,0 +1,140 @@
+# Подставка под кабельные катушки. Третий портированный проект корпуса
+# (`projects/spool-base` корпуса прежних проектов), и взят он не случайно: именно на нём
+# у прежнего рабочего процесса РАСКАЛЫВАЛСЯ конвейер — мешер OCCT на 168
+# канавках вместе с фасками давал 164 открытых ребра, и печатный меш приходилось
+# резать отдельно, через manifold.
+#
+# Происхождение здесь настоящее: почти всё СНЯТО С ИСХОДНОГО МЕША сечениями
+# (так и записано в NOTES оригинала), а выбрано человеком только новое число и
+# ширина отсеков.
+#
+# Обмер делал ОРИГИНАЛ, не Datum. Исходный меш —
+# projects/spool-base/input/spool_base.3mf корпуса — в порт не
+# скопирован: это чужая покупная модель, и числа в `source` ниже ссылаются на
+# сечения, снятые с неё там. Перемерить — `import_model` её в проект и
+# `section` по тем же местам.
+
+# --- снято с оригинала
+WIDTH:
+  value: 81.96
+  unit: mm
+  provenance: measured
+  source: "сечения spool_base.3mf оригинала, корпус по X до вершин рёбер"
+  instrument: model-section
+  tolerance: 0.05
+HEIGHT:
+  value: 36.0
+  unit: mm
+  provenance: measured
+  source: "высота задней части, сечения оригинала"
+  instrument: model-section
+  tolerance: 0.05
+FRONT_H:
+  value: 16.0
+  unit: mm
+  provenance: measured
+  source: "высота передней стенки"
+  instrument: model-section
+  tolerance: 0.05
+TOP_R:
+  value: 12.0
+  unit: mm
+  provenance: measured
+  source: "скругление перехода верх/уклон"
+  instrument: model-section
+  tolerance: 0.3
+CORNER_R:
+  value: 9.7
+  unit: mm
+  provenance: measured
+  source: "углы корпуса в плане"
+  instrument: model-section
+  tolerance: 0.2
+BOTTOM_CHAMFER:
+  value: 2.0
+  unit: mm
+  provenance: measured
+  source: "фаска по низу, 45°"
+  instrument: model-section
+  tolerance: 0.1
+CRADLE_R:
+  value: 38.69
+  unit: mm
+  provenance: measured
+  source: "дуга люльки отсека"
+  instrument: model-section
+  tolerance: 0.1
+CRADLE_UP:
+  value: 5.8
+  unit: mm
+  provenance: measured
+  source: "центр дуги люльки выше верха корпуса"
+  instrument: model-section
+  tolerance: 0.1
+DIV_T:
+  value: 3.0
+  unit: mm
+  provenance: measured
+  source: "перегородка между отсеками"
+  instrument: model-section
+  tolerance: 0.05
+END_T:
+  value: 5.0
+  unit: mm
+  provenance: measured
+  source: "торцевая стенка (5.2/5.0 у оригинала, взято 5.0)"
+  instrument: model-section
+  tolerance: 0.1
+GROOVE_TOP_W:
+  value: 2.0
+  unit: mm
+  provenance: measured
+  source: "рифление: ширина канавки на поверхности"
+  instrument: model-section
+  tolerance: 0.1
+GROOVE_BOT_W:
+  value: 1.0
+  unit: mm
+  provenance: measured
+  source: "рифление: ширина дна канавки"
+  instrument: model-section
+  tolerance: 0.1
+GROOVE_DEPTH:
+  value: 1.0
+  unit: mm
+  provenance: measured
+  source: "глубина канавки"
+  instrument: model-section
+  tolerance: 0.1
+
+# --- выбрано человеком: новая раскладка
+N_SLOTS:
+  value: 6
+  unit: ""
+  provenance: chosen
+  reason: "шесть отсеков вместо четырёх у оригинала"
+SLOT_L:
+  value: 26.0
+  unit: mm
+  provenance: chosen
+  reason: "ширина отсека под катушку 26 мм вместо 33 у оригинала"
+GROOVE_PITCH:
+  value: 3.05
+  unit: mm
+  provenance: chosen
+  reason: "целевой шаг рифления; настоящий подбирается под целое кратное 4"
+TOP_FLAT_X:
+  value: 0.0
+  unit: mm
+  provenance: chosen
+  reason: "до какого X верх плоский, дальше уклон к передней кромке"
+
+# --- производные
+LENGTH:
+  provenance: derived
+  expr: "2 * END_T + N_SLOTS * SLOT_L + (N_SLOTS - 1) * DIV_T"
+  unit: mm
+CRADLE_CZ:
+  provenance: derived
+  expr: "HEIGHT + CRADLE_UP"
+  unit: mm

@@ -1,0 +1,6 @@
+{
+  "name": "datum",
+  "version": "0.1.0",
+  "description": "Навык Datum для встроенного Claude Code: проектирование деталей для 3D-печати операциями mcp__datum__*.",
+  "author": { "name": "Datum" }
+}

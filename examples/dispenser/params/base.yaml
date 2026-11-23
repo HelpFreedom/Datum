@@ -1,0 +1,268 @@
+# Дозатор зубной пасты: носовой узел и флексура.
+#
+# Порт второго проекта рабочего процесса CAD (toothpaste-dispenser). Взят ради
+# одной вещи: у него СОВСЕМ ДРУГОЙ набор проверок — не зацепы и посадки, а
+# аналитика. Деформация листа, жёсткость пружины, сила через кулачок,
+# устойчивость. Если библиотека проверок Datum обобщается, она должна покрыть и
+# это; если нет — станет видно, чего в ней не хватает.
+#
+# Свойства материала объявлены ПАРАМЕТРАМИ, а не спрятаны в проверках. У
+# печатного PLA модуль упругости зависит от ориентации слоёв вдвое, и число,
+# выглядящее точным, дало бы уверенность на пустом месте. Развёртка по
+# незамеренному (sweep_assumed) показывает, какая из догадок решает дело.
+
+# ---------------------------------------------------------------- геометрия
+NOZ_Z0:
+  value: 82.0
+  unit: mm
+  provenance: chosen
+  reason: "срез выхода: щётка 22 мм на ложементе 49.5 плюс зазор 10.5"
+
+PORT_D:
+  value: 5.0
+  unit: mm
+  provenance: chosen
+  reason: "выходное окно и окно шибера"
+
+FLOOR_T:
+  value: 1.2
+  unit: mm
+  provenance: chosen
+  reason: "дно канала под шибером: 3 слоя по 0.4"
+
+CHANNEL_H:
+  value: 2.6
+  unit: mm
+  provenance: chosen
+  reason: "высота кармана шибера: толщина шибера 2.4 плюс 0.2 скольжения"
+
+FLOOR_PLATE_T:
+  provenance: derived
+  unit: mm
+  expr: "FLOOR_T + CHANNEL_H"
+
+NOZ_HALF_W:
+  value: 37.8
+  unit: mm
+  provenance: chosen
+  reason: "блок входит в пазы стоек: полуширина канала 38 минус 0.2"
+
+NOZ_Y0:
+  value: -12.0
+  unit: mm
+  provenance: chosen
+NOZ_Y1:
+  value: 40.0
+  unit: mm
+  provenance: chosen
+
+TUBE_Y:
+  value: 16.0
+  unit: mm
+  provenance: chosen
+  reason: "ось тюбика и выходного окна"
+
+# ------------------------------------------------------------------- шибер
+SLIDE_T:
+  value: 2.4
+  unit: mm
+  provenance: chosen
+SLIDE_W:
+  value: 14.0
+  unit: mm
+  provenance: chosen
+SLIDE_L:
+  value: 36.0
+  unit: mm
+  provenance: chosen
+SLIDE_X0:
+  value: -17.0
+  unit: mm
+  provenance: chosen
+  reason: "левый край шибера в покое"
+
+SLIDE_TRAVEL:
+  value: 6.5
+  unit: mm
+  provenance: chosen
+  reason: "ход шибера до полного открытия окна"
+
+PORT_REST_X:
+  value: -6.5
+  unit: mm
+  provenance: chosen
+  reason: "окно шибера в покое, закрыто: смещено от выхода на ход"
+
+SHUTTER_OPEN_STROKE:
+  value: 6.0
+  unit: mm
+  provenance: chosen
+  reason: "ход люльки, за который шибер открывается"
+
+# ---------------------------------------------------------------- флексура
+LEAF_L:
+  value: 70.0
+  unit: mm
+  provenance: chosen
+  reason: "длина листа между анкером и подвижным блоком"
+LEAF_T:
+  value: 1.0
+  unit: mm
+  provenance: chosen
+  reason: "толщина листа: 2–3 периметра по 0.4"
+LEAF_B:
+  value: 18.0
+  unit: mm
+  provenance: chosen
+LEAF_N:
+  value: 2
+  unit: ""
+  provenance: chosen
+  reason: "два листа: параллелограмм, подвижный блок не поворачивается"
+
+STROKE_MAX:
+  value: 17.0
+  unit: mm
+  provenance: chosen
+  reason: "полный ход люльки: наибольшая доза"
+
+FLEX_PRELOAD:
+  value: 6.0
+  unit: mm
+  provenance: chosen
+  reason: "преднатяг: без него в конце возврата нечем закрыть шибер"
+
+# ---------------------------------------------------------------- материалы
+#
+# Здесь и начинается «реестр незамеренного». Ни одно из этих чисел не измерено
+# на нашем принтере нашим филаментом — все взяты из справочников, где разброс
+# двукратный. Пока они assumed, снимок не готов к печати.
+# Не блокирует. От него зависят силы флексуры и устойчивость тяги, но
+# `datum sweep` показывает: при любом значении из диапазона все они проходят.
+# Пометка стояла, и проект был «не готов к печати» из-за числа, которое ни
+# одного вердикта не меняет. Закрытие шибера на краю, но считается оно по
+# E_PETG, как и в оригинале.
+# 3000 — константа оригинала (`calc.py`: E = {"PLA": 3000.0, ...}); у latch
+# своё 2000 [1500…3500] — там это собственная догадка, не перенесённая.
+# Разные числа одного материала в двух проектах — нормально, пока оба
+# `assumed` с диапазонами: каждый проект отвечает за свою догадку.
+E_PLA:
+  value: 3000.0
+  unit: MPa
+  provenance: assumed
+  range: [2000.0, 3600.0]
+  reason: "модуль упругости печатного PLA: зависит от ориентации слоёв и заполнения"
+  validate_with: test_coupon
+
+POISSON_PLA:
+  value: 0.35
+  unit: ""
+  provenance: assumed
+  range: [0.33, 0.38]
+  reason: "коэффициент Пуассона PLA по справочникам; через него в МКЭ входит пластинная поправка широкого листа"
+
+E_PETG:
+  value: 2000.0
+  unit: MPa
+  provenance: assumed
+  range: [1400.0, 2200.0]
+  reason: "модуль упругости печатного PETG"
+
+EPS_LIM_PLA:
+  value: 0.015
+  unit: ""
+  provenance: assumed
+  range: [0.010, 0.020]
+  reason: "предельная деформация печатного PLA до появления трещин при циклах"
+  validate_with: test_coupon
+  blocking: true
+
+FRICTION_DEG:
+  value: 17.0
+  unit: deg
+  provenance: assumed
+  range: [11.0, 22.0]
+  reason: "угол трения пластик по пластику, µ от 0.2 до 0.4"
+
+DENSITY_PLA:
+  value: 1.24
+  unit: g/cm3
+  provenance: standard
+  ref: "паспорт филамента"
+
+FILL_FRAC:
+  value: 0.45
+  unit: ""
+  provenance: assumed
+  range: [0.30, 0.70]
+  reason: "доля настоящего материала при 20 % заполнения и четырёх периметрах"
+
+# ------------------------------------------------------------- устойчивость
+BASE_W:
+  value: 150.0
+  unit: mm
+  provenance: chosen
+BASE_D:
+  value: 160.0
+  unit: mm
+  provenance: chosen
+BASE_T:
+  value: 8.0
+  unit: mm
+  provenance: chosen
+
+SADDLE_Z:
+  value: 49.5
+  unit: mm
+  provenance: chosen
+  reason: "щётка лежит на этой высоте: сюда и приложено нажатие"
+
+PRESS_N:
+  value: 20.0
+  unit: N
+  provenance: assumed
+  range: [12.0, 30.0]
+  reason: "усилие нажатия пальцем на ложемент"
+
+LATERAL_FRAC:
+  value: 0.3
+  unit: ""
+  provenance: assumed
+  range: [0.15, 0.45]
+  reason: "доля усилия, уходящая вбок: рука нажимает не строго вертикально"
+
+DEVICE_MASS_G:
+  value: 650.0
+  unit: g
+  provenance: assumed
+  range: [500.0, 800.0]
+  reason: "масса башни с полным тюбиком"
+
+# ---------------------------------------------------------------------- тяга
+ROD_W:
+  value: 8.0
+  unit: mm
+  provenance: chosen
+ROD_T:
+  value: 4.0
+  unit: mm
+  provenance: chosen
+ROD_L:
+  value: 240.0
+  unit: mm
+  provenance: chosen
+  reason: "тяга от рычага головы до каретки"
+
+# Карманы облегчения снизу и рёбра между ними. Ребро появилось после того, как
+# `bridge_span` показал мост в 55.5 мм у сплошного кармана 56×56 — вдвое больше
+# того, что пластик проходит без провисания.
+POCKET_W:
+  value: 56.0
+  unit: mm
+  provenance: chosen
+  reason: "сторона кармана облегчения под плитой"
+POCKET_RIB:
+  value: 4.0
+  unit: mm
+  provenance: chosen
+  reason: "ребро посреди кармана: делит мост пополам, 26 мм вместо 55"

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Datum из dmenu, меню и терминала. Ставится ссылкой: `make install`
+# (~/.local/bin/datum → этот файл).
+#
+#   datum                открыть окно с пустым проектом «Без названия»
+#   datum <каталог>      открыть окно с этим проектом
+#   datum <файл.datum>   распаковать архив рядом с ним и открыть окно
+#   datum check <проект> и любая другая команда — обычный CLI
+#
+# Окно отрывается от терминала: из dmenu терминала нет вовсе, а из консоли
+# незачем держать её занятой. Вывод окна — в журнал, путь к нему печатается.
+# Ошибку, которую из dmenu не увидеть, показывает уведомление.
+set -euo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+root=$(cd "$(dirname "$self")/.." && pwd)
+python="$root/.venv/bin/python"
+electron="$root/node_modules/electron/dist/electron"
+main="$root/apps/shell/dist/main/main.js"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/datum"
+
+fail() {
+  echo "datum: $1" >&2
+  if [[ ! -t 2 ]] && command -v notify-send >/dev/null; then
+    notify-send -u critical "Datum не запустился" "$1" || true
+  fi
+  exit 1
+}
+
+# Архив проекта — окно: распакует его оболочка той же операцией `unpack`.
+archive=""
+if [[ $# -gt 0 && -f "$1" && "${1,,}" == *.datum ]]; then
+  archive=$(readlink -f "$1")
+fi
+
+# Первый аргумент — не каталог и не архив: это команда CLI (check, init, --help…).
+if [[ $# -gt 0 && -z "$archive" && ! -d "$1" ]]; then
+  [[ -x "$python" ]] || fail "нет окружения Python: $python"
+  exec "$python" -m datum.cli "$@"
+fi
+
+project=()
+if [[ -n "$archive" ]]; then
+  project=("$archive")
+elif [[ $# -gt 0 ]]; then
+  dir=$(readlink -f "$1")
+  [[ -f "$dir/datum.toml" ]] || fail "$dir — не проект Datum: нет datum.toml. Новый проект: datum init $dir"
+  project=("$dir")
+fi
+
+[[ -x "$electron" ]] || fail "нет Electron: запустите scripts/bootstrap.sh в $root"
+[[ -f "$main" ]] || fail "окно не собрано: npm run build в $root"
+
+mkdir -p "$state"
+log="$state/window.log"
+# Журнал не растёт без конца: больше LOG_MAX — уезжает в window.1.log (тот —
+# в window.2.log) при запуске. Журнал упавшего запуска так переживает и
+# следующий запуск, и ещё один (идея из cadcraft). Окно, уже работающее,
+# пишет в переименованный файл — его вывод не теряется.
+LOG_MAX=$((4 * 1024 * 1024))
+if [[ -f "$log" ]] && (( $(stat -c %s "$log") > LOG_MAX )); then
+  [[ -f "$state/window.1.log" ]] && mv -f "$state/window.1.log" "$state/window.2.log"
+  mv -f "$log" "$state/window.1.log"
+fi
+{ echo; echo "=== $(date '+%F %T') datum ${project[*]:-}"; } >>"$log"
+cd "$root"
+setsid -f "$electron" "$main" "${project[@]}" >>"$log" 2>&1 </dev/null
+if [[ -t 1 ]]; then
+  echo "Datum открывается${project:+: ${project[0]}}. Журнал окна: $log"
+fi

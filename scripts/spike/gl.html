@@ -1,0 +1,76 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Datum — замер GL</title>
+<style>body{margin:0;background:#15161a;color:#dfe3ea;font:13px system-ui;padding:14px}
+pre{font-size:12px;white-space:pre-wrap}canvas{border:1px solid #333}</style></head><body>
+<h3 style="margin:0 0 8px">Datum — замер WebGL2</h3>
+<canvas id="cv" width="1024" height="600"></canvas>
+<pre id="o">…</pre>
+<script>
+(async () => {
+  const r = {};
+  const c = document.getElementById('cv');            // canvas В DOM — иначе отрисовка пропускается
+  const gl = c.getContext('webgl2', { antialias: false, powerPreference: 'high-performance' });
+  r.webgl2 = !!gl;
+  if (!gl) { window.spike.report(r); return; }
+
+  const d = gl.getExtension('WEBGL_debug_renderer_info');
+  r.renderer = d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : 'n/a';
+  r.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  r.colorBufferFloat = !!gl.getExtension('EXT_color_buffer_float');
+
+  const TRIS = 1300000, VERTS = TRIS * 3;
+  const pos = new Float32Array(VERTS * 3);
+  for (let i = 0; i < VERTS; i++) {                   // мелкие треугольники, как в реальном меше
+    const cx = (Math.random() - 0.5) * 1.6, cy = (Math.random() - 0.5) * 1.6, cz = Math.random() * 0.8;
+    pos[i*9+0]=cx;        pos[i*9+1]=cy;        pos[i*9+2]=cz;
+    pos[i*9+3]=cx+0.004;  pos[i*9+4]=cy;        pos[i*9+5]=cz;
+    pos[i*9+6]=cx;        pos[i*9+7]=cy+0.004;  pos[i*9+8]=cz;
+  }
+  const t0 = performance.now();
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+  gl.finish();
+  r.upload_ms = Math.round(performance.now() - t0);
+  r.uploaded_MB = Math.round(pos.byteLength / 1048576);
+  r.triangles = TRIS;
+
+  const mk = (t, s) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
+  const pr = gl.createProgram();
+  gl.attachShader(pr, mk(gl.VERTEX_SHADER,
+    '#version 300 es\nin vec3 p;uniform float a;out float z;\nvoid main(){float s=sin(a),co=cos(a);\nvec3 q=vec3(p.x*co-p.y*s,p.x*s+p.y*co,p.z);z=q.z;gl_Position=vec4(q,1.0);}'));
+  gl.attachShader(pr, mk(gl.FRAGMENT_SHADER,
+    '#version 300 es\nprecision mediump float;in float z;out vec4 o;\nvoid main(){o=vec4(0.25+z,0.55,0.95-z,1.0);}'));
+  gl.linkProgram(pr);
+  r.shaderOk = gl.getProgramParameter(pr, gl.LINK_STATUS);
+  if (!r.shaderOk) { r.linkLog = gl.getProgramInfoLog(pr); window.spike.report(r); return; }
+
+  gl.useProgram(pr);
+  const loc = gl.getAttribLocation(pr, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+  const uA = gl.getUniformLocation(pr, 'a');
+  gl.viewport(0, 0, c.width, c.height);
+  gl.enable(gl.DEPTH_TEST);
+
+  const px = new Uint8Array(4);
+  const frame = (a) => {                              // readPixels — надёжная синхронизация с GPU
+    gl.uniform1f(uA, a);
+    gl.clearColor(0.08, 0.09, 0.10, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, VERTS);
+    gl.readPixels(c.width >> 1, c.height >> 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  };
+  for (let i = 0; i < 5; i++) frame(i * 0.1);         // прогрев
+  const FR = 30, t1 = performance.now();
+  for (let f = 0; f < FR; f++) frame(f * 0.05);
+  const ms = (performance.now() - t1) / FR;
+  r.ms_per_frame = Math.round(ms * 100) / 100;
+  r.fps = Math.round(1000 / ms);
+  r.centerPixel = Array.from(px);                     // доказательство, что отрисовка была
+  r.err = gl.getError();
+  document.getElementById('o').textContent = JSON.stringify(r, null, 2);
+  window.spike.report(r);
+})().catch(e => { document.getElementById('o').textContent = 'ОШИБКА: ' + e.message;
+                  window.spike.report({ error: e.message }); });
+</script></body></html>

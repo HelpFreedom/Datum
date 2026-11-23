@@ -1,0 +1,11 @@
+name = "spool"
+units = "mm"
+
+[printer]
+profile = "elegoo-cc2-0.4"
+bed = [256, 256, 256]
+nozzle = 0.4
+material = "PLA"
+
+[build]
+guard = "checkpoint"
