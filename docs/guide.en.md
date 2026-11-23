@@ -2,12 +2,17 @@
 
 [Русский](guide.md) · **English**
 
+Datum is an AI-first engineering editor: an AI agent handles the parts,
+assemblies, mechanisms and calculations, and the human steers. This guide
+covers installing it, setting tasks for the agent and what lies under the
+hood.
+
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Running](#running)
+- [Working with the agent](#working-with-the-agent)
 - [Your first project](#your-first-project)
 - [The window](#the-window)
-- [The agent: Claude Code](#the-agent-claude-code)
 - [Saving and the `.datum` archive](#saving-and-the-datum-archive)
 - [Other people's models](#other-peoples-models)
 - [Export and slicing](#export-and-slicing)
@@ -26,7 +31,7 @@ English translation where it helps.
 | Python **3.11** | backend; the dependency lock is built for 3.11 exactly | yes |
 | Node.js 22.12+ and npm | the window (Electron 44, Vite) | yes |
 | a C++ compiler, `make`, Python 3 | building the `node-pty` terminal module | yes |
-| [Claude Code](https://claude.com/claude-code) | the agent in the window | no |
+| [Claude Code](https://claude.com/claude-code) — or another MCP-capable agent | the agent does the work; the window, skill and critic are built for Claude Code | yes |
 | ElegooSlicer | slicing from Datum (`datum slice`) | no |
 
 Expect about 2–3 GB on disk: Electron, the fTetWild mesher, MuJoCo and (on
@@ -111,7 +116,66 @@ shown as a notification (`notify-send`).
 CLI exit codes: `0` — passed, `1` — checks failed, `2` — bad arguments, `3` —
 the operation refused (no project, an error in a script), `130` — interrupted.
 
+## Working with the agent
+
+Datum is an editor for an AI agent: the agent designs and computes, the human
+sets the task, answers questions and decides when it is done. It is designed
+around [Claude Code](https://claude.com/claude-code).
+
+**Setup.** Install Claude Code so that `claude` is on `PATH` (or at
+`~/.local/bin/claude`; any other path — via the `DATUM_CLAUDE` variable) and
+sign in once in a terminal. In the Datum window the agent is started with the
+"Запустить Claude Code" (Start Claude Code) button in the bottom panel — it
+does not start by itself: opening the window is not yet calling the agent.
+
+**How to set a task.** Talk about the intent, not the commands:
+
+- what it is and what it is for: "a wall holder for two screwdrivers", "an arm
+  that lifts 100 g at 15 cm";
+- what to make it with: material, printer or manufacturing method, purchased
+  parts (a servo, a bearing, screws) — with a model or datasheet if you have
+  one;
+- what is known for sure and what is not: "I measured the diameter with a
+  caliper — 8.1 mm" becomes a `measured` parameter with a source; the agent
+  declares unknowns as guesses with a range and tells you whether they are
+  worth measuring;
+- ask it to show you: the agent puts a part, a section or a caption right into
+  the window, and you get your own view back with one button;
+- point at things: select a part, hover the caliper and say "here" — the agent
+  sees what is selected and where you are looking from.
+
+**What the built-in agent gets:**
+
+- every Datum operation as an MCP tool (`mcp__datum__*`) — the same as the CLI
+  and the window's buttons;
+- a skill with design rules (`plugin/skills/datum`), loaded as a plugin
+  (`--plugin-dir plugin`) in any project;
+- a view of the window: what is selected and hidden, where the camera looks,
+  what the caliper picked (`window_state`), the whole bed as a picture
+  (`scene_view`); it can also show you a part, a section or a caption
+  (`window_show`);
+- an AI critic (`plugin/agents/critic.md`): when the project is done, a fresh
+  agent with read-only tools looks for what was missed (at most two rework
+  rounds), and the `/datum:audit` command — an independent audit by topic;
+- the project's decision log (`JOURNAL.md`): a new session receives a project
+  summary by itself and picks up where you left off.
+
+**Without the window.** `claude` in a plain terminal sees the tools too:
+inside a project — through the `.mcp.json` written by `datum init`; in the
+repository — after `make mcp`. If the window is open, the agent's edits show
+up in it immediately.
+
+**Another agent.** Which agent to use is your choice: any MCP-capable agent
+connects to the same operations with `datum mcp --stdio` (or
+`.venv/bin/python -m datum.cli mcp --stdio`). The window, the skill, the
+critic and the hooks are built for Claude Code; give another agent the skill's
+rules yourself — they are in `plugin/skills/datum/SKILL.md` and
+`references/`.
+
 ## Your first project
+
+Normally the agent does all of this when you ask. Here is the same by hand,
+to show what lies under the hood: plain files and commands.
 
 ```sh
 datum init ~/parts/plate
@@ -209,31 +273,6 @@ checks) into the project trash, `Ctrl+Z` brings it back. All keys: `?`.
 The camera works like a slicer's: the left button orbits around the bed's
 vertical, right or middle pans, the wheel zooms towards the cursor with a
 constant step (finer with `Shift`), `H` resets the view.
-
-## The agent: Claude Code
-
-Install [Claude Code](https://claude.com/claude-code) so that `claude` is on
-`PATH` (or at `~/.local/bin/claude`) and sign in once in a terminal. In the
-Datum window the agent is started with a button in the bottom panel — it does
-not start by itself.
-
-The built-in agent gets:
-
-- every Datum operation as an MCP tool (`mcp__datum__*`) — the same as the CLI
-  and the window's buttons;
-- a skill with design rules (`plugin/skills/datum`), loaded as a plugin
-  (`--plugin-dir plugin`) in any project;
-- a view of the window: what is selected and hidden, where the camera looks,
-  what the caliper picked (`window_state`), the whole bed as a picture
-  (`scene_view`); it can also show you a part, a section or a caption
-  (`window_show`) — you restore your view with one button;
-- an AI critic (`plugin/agents/critic.md`): when the project is done, a fresh
-  agent with read-only tools looks for what was missed (at most two rework
-  rounds), and the `/datum:audit` command — an independent audit by topic.
-
-`claude` in a plain terminal sees the tools too: inside a project — through
-the `.mcp.json` written by `datum init`; in the repository — after `make mcp`.
-If the window is open, the agent's edits show up in it immediately.
 
 ## Saving and the `.datum` archive
 
