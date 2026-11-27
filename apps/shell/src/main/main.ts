@@ -36,6 +36,18 @@ let backend = new Backend();
 const agent = new Agent();
 let handshake: Handshake | null = null;
 let win: BrowserWindow | null = null;
+
+// Повторный запуск с рабочего стола возвращает окно с текущим проектом.
+// Явные запуски с проектом из терминала по-прежнему могут открывать свои окна.
+if (process.env.DATUM_DESKTOP_LAUNCH === "1") {
+  if (!app.requestSingleInstanceLock()) app.exit(0);
+  app.on("second-instance", () => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    if (win.isVisible()) win.focus();
+  });
+}
+
 /** Происхождение окна — меняется вместе с сервером при открытии другого проекта. */
 let origin = "";
 /** Идёт ли смена проекта: второй запрос, пока первый не кончился, — отказ. */

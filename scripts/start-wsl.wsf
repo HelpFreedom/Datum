@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<job>
+<script language="VBScript"><![CDATA[
+Option Explicit
+
+If WScript.Arguments.Count <> 3 Then WScript.Quit 2
+
+Dim shell, command, code
+Set shell = CreateObject("WScript.Shell")
+command = Quoted(WScript.Arguments(0)) & " --distribution " & Quoted(WScript.Arguments(1)) _
+    & " --cd " & Quoted(WScript.Arguments(2)) _
+    & " --exec /usr/bin/env DATUM_DESKTOP_LAUNCH=1 ./scripts/datum"
+code = shell.Run(command, 0, True)
+If code <> 0 Then
+    shell.Popup "Проверьте дистрибутив WSL и сборку Datum. Код завершения: " & code _
+        & vbCrLf & "Журнал окна в Linux: ~/.local/state/datum/window.log", 0, "Datum", 16
+End If
+WScript.Quit code
+
+Function Quoted(value)
+    ' Run раскрывает переменные окружения. Параметры проходят без такого раскрытия.
+    If InStr(value, """") > 0 Or InStr(value, "%") > 0 Then WScript.Quit 2
+    Quoted = """" & value & """"
+End Function
+]]></script>
+</job>
