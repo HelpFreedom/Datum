@@ -25,12 +25,15 @@ wsl --version
 apt-get update
 apt-get install git ca-certificates make g++ python3.11-venv python3-dev \
   libgtk-3-0 libnss3 libasound2 libdrm2 libgbm1 libxss1 libxtst6 \
-  libxkbcommon0 libgl1-mesa-dri libegl1 libglu1-mesa
+  libxkbcommon0 libgl1 libgl1-mesa-dri libegl1 libegl-mesa0 libglu1-mesa
 ```
 
 Установите в Linux Node.js 22.12 или новее с npm. Проверьте, что
 `node -p process.platform` выводит `linux`, а `python3.11 --version` — Python 3.11.
 Выполните [установку Datum](guide.md#установка) в этом дистрибутиве.
+На Debian 12 после создания `.venv` обновите инструменты установки командой
+`.venv/bin/python -m pip install --upgrade pip setuptools`. Штатный pip 23.0.1
+останавливался на зависимости `pyjwt[crypto]` при установке из файла с хешами.
 Windows и Linux используют разные двоичные модули: каждому окружению нужны
 собственные `.venv` и `node_modules`.
 
@@ -53,4 +56,6 @@ wsl -d Debian --cd /home/alex/Datum --exec ./scripts/datum examples/latch
 Для тестов разработчика выполните `make check` в каталоге репозитория в Linux.
 Если окно не появилось, посмотрите `~/.local/state/datum/window.log` в том же
 дистрибутиве. Проверьте, что задана переменная `DISPLAY` и существует
-`/mnt/wslg`. Запускайте Electron от обычного пользователя.
+`/mnt/wslg`. Если окно открылось, но модель не видна и в журнале есть ошибка
+загрузки `libGL.so.1`, проверьте установку пакета `libgl1` и заново откройте
+Datum. Запускайте Electron от обычного пользователя.
