@@ -163,6 +163,29 @@ Claude Code» в нижней панели — сам он не стартует
 навыка стоит дать самому — они в `plugin/skills/datum/SKILL.md` и
 `references/`.
 
+### Codex через MCP
+
+Установив Datum, из корня его репозитория зарегистрируйте сервер в Codex CLI:
+
+```sh
+codex mcp add datum -- "$PWD/.venv/bin/python" -m datum.cli mcp --stdio
+codex mcp get datum
+```
+
+Если Codex работает в Windows, а Datum установлен в WSL 2, выполните вместо
+этого в PowerShell (подставьте свой дистрибутив и каталог Datum):
+
+```powershell
+codex mcp add datum -- wsl.exe -d Debian --cd /home/alex/Datum --exec /home/alex/Datum/.venv/bin/python -m datum.cli mcp --stdio
+codex mcp get datum
+```
+
+Откройте новую сессию Codex и попросите: «Вызови инструмент `datum_status`
+и покажи версию Datum». Так вы проверите реальный вызов. Для работы с деталью
+указывайте путь к проекту, видимый серверу Datum, например
+`/home/alex/Datum/examples/latch`. Это подключение внешнего Codex.
+Кнопка запуска агента в окне Datum открывает Claude Code.
+
 ## Первый проект
 
 Обычно всё это делает агент по вашей просьбе. Здесь то же самое — руками,
