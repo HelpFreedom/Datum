@@ -108,7 +108,7 @@ make mcp       # .mcp.json в корне репозитория
 Ошибку запуска из dmenu показывает уведомление (`notify-send`).
 
 **Ярлык Windows (WSL 2 с WSLg).** После установки Datum в Linux запустите
-этот скрипт в Windows PowerShell из каталога, где доступен репозиторий:
+этот скрипт в Windows PowerShell из копии репозитория на диске Windows:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\install-wsl-shortcut.ps1 -Distribution Debian -Checkout /home/alex/Datum
@@ -119,8 +119,9 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\install-
 приложение без указанного проекта, через WSLg. Повторный запуск возвращает
 окно с текущим проектом. Консоль запускается скрыто.
 При отказе Windows показывает код завершения и путь к журналу окна.
-Повторный запуск скрипта обновляет ярлык. Параметр `RemoteSigned` применяется
-к запущенному процессу PowerShell.
+Сценарий запуска хранится в `%LOCALAPPDATA%\Datum`. Повторная установка
+обновляет сценарий и ярлык. Параметр `RemoteSigned` применяется к запущенному
+процессу PowerShell.
 
 Коды возврата CLI: `0` — прошло, `1` — проверки не прошли, `2` — неверные
 аргументы, `3` — операция отказала (нет проекта, ошибка в скрипте), `130` —

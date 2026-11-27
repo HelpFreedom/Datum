@@ -22,17 +22,23 @@ if (-not $desktop -or -not (Test-Path -LiteralPath $desktop -PathType Container)
     throw 'Папка рабочего стола Windows недоступна.'
 }
 
-$path = Join-Path $desktop 'Datum.lnk'
-$launcher = Join-Path $PSScriptRoot 'start-wsl.wsf'
-if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
-    throw "Не найден сценарий запуска Datum: $launcher"
+$launcherSource = Join-Path $PSScriptRoot 'start-wsl.wsf'
+if (-not (Test-Path -LiteralPath $launcherSource -PathType Leaf)) {
+    throw "Не найден сценарий запуска Datum: $launcherSource"
 }
+$localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+$launcherDirectory = Join-Path $localData 'Datum'
+New-Item -ItemType Directory -Path $launcherDirectory -Force | Out-Null
+$launcher = Join-Path $launcherDirectory 'start-wsl.wsf'
+Copy-Item -LiteralPath $launcherSource -Destination $launcher
+
+$path = Join-Path $desktop 'Datum.lnk'
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($path)
 $shortcut.TargetPath = (Get-Command wscript.exe -CommandType Application | Select-Object -First 1).Source
 $shortcut.Arguments = '"{0}" "{1}" "{2}" "{3}"' -f $launcher, $wsl, $Distribution, $Checkout
 $shortcut.Description = 'Открыть Datum через WSL 2'
-$shortcut.WorkingDirectory = $PSScriptRoot
+$shortcut.WorkingDirectory = $launcherDirectory
 $shortcut.WindowStyle = 1
 $shortcut.Save()
 Write-Output $path
