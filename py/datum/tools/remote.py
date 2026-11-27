@@ -70,9 +70,10 @@ def endpoint_from_env() -> Endpoint | None:
     if not path:
         return None
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        return Endpoint(int(data["port"]), str(data["token"]),
-                        str(data.get("project", "")), int(data.get("pid", 0)))
+        from datum.server.handshake import read_handshake
+
+        data = read_handshake(path, remove=False)
+        return Endpoint(data.port, data.token, data.project, data.pid)
     except (OSError, ValueError, KeyError):
         return None
 

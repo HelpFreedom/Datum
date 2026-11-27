@@ -25,6 +25,12 @@ READY_MARKER = "DATUM_READY"
 
 
 def handshake_dir() -> Path:
+    if os.name == "nt":
+        from datum.server import _win_handshake as native
+
+        d = Path(os.environ.get("XDG_RUNTIME_DIR") or native.local_data()) / "datum"
+        with native.directory(d, create=True):
+            return d
     base = os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp"
     d = Path(base) / "datum"
     d.mkdir(parents=True, exist_ok=True)
@@ -51,6 +57,11 @@ def write_handshake(*, port: int, token: str, project: str,
                     path: str | Path | None = None) -> Path:
     target = Path(path) if path else handshake_dir() / f"{uuid.uuid4().hex}.json"
     payload = {"port": port, "token": token, "pid": os.getpid(), "project": project}
+    if os.name == "nt":
+        from datum.server import _win_handshake as native
+
+        native.write(target, payload)
+        return target
     # Создаём файл сразу с правами 0600: между созданием и chmod иначе есть
     # окно, в которое токен может прочитать кто угодно.
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -69,9 +80,14 @@ class Handshake:
 
 def read_handshake(path: str | Path, *, remove: bool = True) -> Handshake:
     p = Path(path)
-    data = json.loads(p.read_text(encoding="utf-8"))
-    if remove:
-        p.unlink(missing_ok=True)
+    if os.name == "nt":
+        from datum.server import _win_handshake as native
+
+        data = native.read(p, remove=remove)
+    else:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if remove:
+            p.unlink(missing_ok=True)
     return Handshake(port=int(data["port"]), token=str(data["token"]),
                      pid=int(data.get("pid", 0)), project=str(data.get("project", "")))
 
@@ -89,6 +105,11 @@ def read_handshake(path: str | Path, *, remove: bool = True) -> Handshake:
 
 def _servers_dir() -> Path:
     d = handshake_dir() / "servers"
+    if os.name == "nt":
+        from datum.server import _win_handshake as native
+
+        with native.directory(d, create=True):
+            return d
     d.mkdir(parents=True, exist_ok=True)
     try:
         d.chmod(0o700)

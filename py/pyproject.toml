@@ -39,7 +39,9 @@ dependencies = [
 # Приходил и так вместе с uvicorn[standard], но раз сервер импортирует его сам,
 # зависимость объявлена явно.
 server = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "websockets>=13",
-          "watchfiles>=0.21"]
+          "watchfiles>=0.21",
+          # Закрытый файл рукопожатия в Windows: владелец, DACL и открытие по дескриптору.
+          "pywin32>=311; sys_platform == 'win32'"]
 mcp    = ["mcp>=1.2"]
 brep   = ["build123d>=0.11", "cadquery-ocp-novtk>=7.9"]
 # Тетраэдральная сетка произвольного тела (fTetWild). Опция: без неё МКЭ
