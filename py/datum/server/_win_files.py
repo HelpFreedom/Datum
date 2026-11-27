@@ -1,4 +1,4 @@
-"""Файл рукопожатия Windows. Корень доверия — LocalAppData текущей учётной записи."""
+"""Проверка каталогов и файлов Windows по удерживаемому дескриптору."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def _attributes(user):
 def _verify(handle, path, user, *, directory: bool, private: bool):
     attrs = win32file.GetFileInformationByHandle(handle)[0]
     if attrs & flags.FILE_ATTRIBUTE_REPARSE_POINT or bool(attrs & flags.FILE_ATTRIBUTE_DIRECTORY) != directory:
-        raise PermissionError(f"неподходящий тип файла рукопожатия: {path}")
+        raise PermissionError(f"неподходящий тип файла: {path}")
     sd = security.GetSecurityInfo(handle, security.SE_FILE_OBJECT,
                                   security.OWNER_SECURITY_INFORMATION | security.DACL_SECURITY_INFORMATION)
     trusted = (user, security.CreateWellKnownSid(security.WinLocalSystemSid),
@@ -69,13 +69,46 @@ def _verify(handle, path, user, *, directory: bool, private: bool):
         if kind == security.ACCESS_ALLOWED_ACE_TYPE and (
                 rest[0] in trusted or (not private and mask & ~readonly == 0)):
             continue
-        raise PermissionError(f"права других учётных записей не подходят для рукопожатия: {path}")
+        raise PermissionError(f"права других учётных записей не подходят для доступа Datum: {path}")
 
 
 def _component(name: str) -> None:
     if (not name or name in (".", "..") or ":" in name or name.endswith((" ", "."))
             or Path(name).is_reserved()):
         raise ValueError(f"неподходящее имя в пути рукопожатия: {name!r}")
+
+
+def _pin_directory(stack: ExitStack, path: Path, user, *, private: bool):
+    # Пока дескриптор открыт без FILE_SHARE_DELETE, каталог нельзя переименовать.
+    handle = win32file.CreateFile(
+        str(path), flags.READ_CONTROL | rights.FILE_READ_ATTRIBUTES,
+        flags.FILE_SHARE_READ | flags.FILE_SHARE_WRITE, None, flags.OPEN_EXISTING,
+        win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32file.FILE_FLAG_BACKUP_SEMANTICS, None)
+    stack.callback(handle.Close)
+    _verify(handle, path, user, directory=True, private=private)
+
+
+@contextmanager
+def parameter_files(project: str | Path):
+    """Держать каталог параметров на месте во время чтения и атомарной замены."""
+    project = Path(project)
+    user = _user()
+    with _file_errors(), ExitStack() as stack:
+        for path in (project, project / "params"):
+            _pin_directory(stack, path, user, private=False)
+        for path in (project / "params" / "base.yaml", project / "datum.toml"):
+            if not path.exists():
+                continue
+            handle = win32file.CreateFile(
+                str(path), flags.READ_CONTROL | rights.FILE_READ_ATTRIBUTES,
+                flags.FILE_SHARE_READ | flags.FILE_SHARE_WRITE | flags.FILE_SHARE_DELETE,
+                None, flags.OPEN_EXISTING, win32file.FILE_FLAG_OPEN_REPARSE_POINT, None)
+            try:
+                _verify(handle, path, user, directory=False, private=False)
+            finally:
+                # Каталог уже проверен и удерживается; для os.replace файл нужно закрыть.
+                handle.Close()
+        yield
 
 
 @contextmanager
@@ -99,13 +132,7 @@ def directory(path: Path, *, create: bool = False):
                 except pywintypes.error as exc:
                     if exc.winerror != winerror.ERROR_ALREADY_EXISTS:
                         raise
-            # Без FILE_SHARE_DELETE: пока идёт операция, этот каталог нельзя переименовать.
-            handle = win32file.CreateFile(
-                str(here), flags.READ_CONTROL | rights.FILE_READ_ATTRIBUTES,
-                flags.FILE_SHARE_READ | flags.FILE_SHARE_WRITE, None, flags.OPEN_EXISTING,
-                win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32file.FILE_FLAG_BACKUP_SEMANTICS, None)
-            stack.callback(handle.Close)
-            _verify(handle, here, user, directory=True, private=here == path)
+            _pin_directory(stack, here, user, private=here == path)
         yield user
 
 

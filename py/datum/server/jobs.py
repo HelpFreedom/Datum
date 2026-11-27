@@ -17,6 +17,7 @@ import os
 import tempfile
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 from datum.build.worker import BuildWorker, WorkerLimits, limits_for
@@ -163,15 +164,15 @@ class JobManager:
                 # результата. Во временном каталоге: туда перила пускают запись.
                 fd, emit_path = tempfile.mkstemp(prefix="datum-emit-", suffix=".jsonl")
                 os.close(fd)
-                worker = BuildWorker(
-                    _job_body(spec, job.kwargs, emit_path),
-                    limits=limits_for(job.kwargs, self.limits,
-                                      headroom_mb=spec.memory_headroom_mb))
-                job._worker = worker
-                worker.start()
-                waiting = loop.run_in_executor(None, worker.wait)
-                tail = _EmitTail(emit_path)
                 try:
+                    worker = BuildWorker(
+                        _job_body(spec, job.kwargs, emit_path),
+                        limits=limits_for(job.kwargs, self.limits,
+                                          headroom_mb=spec.memory_headroom_mb))
+                    job._worker = worker
+                    worker.start()
+                    waiting = loop.run_in_executor(None, worker.wait)
+                    tail = _EmitTail(emit_path)
                     while True:
                         done, _ = await asyncio.wait({waiting}, timeout=EMIT_POLL_S)
                         self._publish_emitted(job, tail)
@@ -199,7 +200,13 @@ class JobManager:
 
                 serving = SERVING.set(True)
                 try:
-                    job.result = await spec.fn(**job.kwargs)
+                    writing = nullcontext()
+                    if os.name == "nt" and spec.name == "param_set":
+                        from datum.server._win_files import parameter_files
+
+                        writing = parameter_files(job.kwargs["project"])
+                    with writing:
+                        job.result = await spec.fn(**job.kwargs)
                 finally:
                     SERVING.reset(serving)
                 job.status = "failed" if job.result.get("error") else "done"

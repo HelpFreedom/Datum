@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import os
 import pickle
-import resource
 import signal
 import struct
 import tempfile
@@ -44,6 +43,10 @@ __all__ = ["limits_for", "WorkerLimits", "WorkerOutcome", "BuildWorker", "run_in
 
 #: Пол для подбираемого предела памяти, МБ.
 DEFAULT_MEMORY_MB = 4096
+
+
+class WorkerUnavailable(RuntimeError):
+    """Система не предоставляет проверенный исполнитель скриптов проекта."""
 
 
 class LimitTooLow(ValueError):
@@ -338,6 +341,8 @@ def limits_for(kwargs: dict, base: WorkerLimits, *,
 
 # ------------------------------------------------------------------ в дочернем
 def _apply_limits(limits: WorkerLimits) -> None:
+    import resource
+
     def setrl(what, soft, hard=None):
         try:
             cur_soft, cur_hard = resource.getrlimit(what)
@@ -578,6 +583,8 @@ class BuildWorker:
 
     # ------------------------------------------------------------ управление
     def start(self) -> "BuildWorker":
+        if os.name == "nt":
+            raise WorkerUnavailable("в Windows пока нет защищённого исполнителя скриптов проекта")
         if self.pid is not None:                 # pragma: no cover
             raise RuntimeError("уже запущен")
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -38,6 +39,15 @@ _MEDIA = {"glb": "model/gltf-binary", "png": "image/png", "gif": "image/gif",
           "json": "application/json",
           "mesh": "application/octet-stream", "stl": "model/stl",
           "3mf": "model/3mf", "step": "application/step"}
+
+
+# В Windows проверены эти встроенные операции. Задания со скриптами проекта
+# ждут исполнителя с полным набором ограничений ресурсов.
+_WINDOWS_OPS = frozenset({"datum_status", "check_list", "fem_verify", "param_set"})
+
+
+def _supported(spec) -> bool:
+    return os.name != "nt" or (not spec.isolate and spec.name in _WINDOWS_OPS)
 
 
 class ServerState:
@@ -164,7 +174,7 @@ def create_app(project: str | Path, *, security: ServerSecurity | None = None,
                          "description": s.description,
                          "args": [{"name": a.name, "required": a.required,
                                    "help": a.help} for a in s.args]}
-                        for s in sorted(OPS.values(), key=lambda x: x.name)]}
+                        for s in sorted(OPS.values(), key=lambda x: x.name) if _supported(s)]}
 
     def checked(spec, args: dict) -> dict | JSONResponse:
         """Аргументы — по сигнатуре операции, проект — только свой.
@@ -173,6 +183,9 @@ def create_app(project: str | Path, *, security: ServerSecurity | None = None,
         за правду о своём документе. Раньше путь к другому проекту в теле
         запроса собирал ЧУЖОЙ проект и разослал бы окну его геометрию.
         """
+        if not _supported(spec):
+            return JSONResponse({"error": f"операция {spec.name} пока не поддержана сервером Windows"},
+                                status_code=501)
         args = dict(args)
         if "project" in inspect.signature(spec.fn).parameters:
             given = args.get("project")

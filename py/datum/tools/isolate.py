@@ -19,7 +19,8 @@ import asyncio
 import functools
 from typing import Any, Callable
 
-from datum.build.worker import BuildWorker, WorkerLimits, limits_for, wait_or_cancel
+from datum.build.worker import (BuildWorker, WorkerLimits, WorkerUnavailable, limits_for,
+                                wait_or_cancel)
 from datum.tools.registry import OpSpec
 
 __all__ = ["run_isolated", "isolated_callable", "DEFAULT_LIMITS"]
@@ -43,7 +44,10 @@ def run_isolated(fn: Callable, kwargs: dict, *,
                  headroom_mb: int | None = None) -> dict:
     """Выполнить операцию в отдельном процессе и вернуть её словарь."""
     limits = limits_for(kwargs, limits or DEFAULT_LIMITS, headroom_mb=headroom_mb)
-    outcome = wait_or_cancel(BuildWorker(_job(fn, kwargs), limits=limits).start())
+    try:
+        outcome = wait_or_cancel(BuildWorker(_job(fn, kwargs), limits=limits).start())
+    except WorkerUnavailable as exc:
+        return {"error": str(exc), "report": f"ОШИБКА: {exc}", "worker_status": "unavailable"}
     if outcome.ok:
         result = outcome.payload.get("result")
         if isinstance(result, dict):

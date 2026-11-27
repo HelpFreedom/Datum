@@ -14,6 +14,7 @@ import socket
 import sys
 import threading
 import time
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import uvicorn
@@ -59,6 +60,35 @@ def watch_parent(parent_pid: int, period: float = 1.0) -> None:
     thread.start()
 
 
+@contextmanager
+def _watch_windows_parent(pid: int, server: uvicorn.Server):
+    import win32api
+    import win32con
+    import win32event
+
+    # Дескриптор сохраняет идентичность родителя после повторного использования PID.
+    with ExitStack() as cleanup:
+        parent = win32api.OpenProcess(win32con.SYNCHRONIZE, False, pid)
+        cleanup.callback(parent.Close)
+        if win32event.WaitForSingleObject(parent, 0) != win32event.WAIT_TIMEOUT:
+            raise ProcessLookupError("родитель уже завершился")
+        stopped = win32event.CreateEvent(None, True, False, None)
+        cleanup.callback(stopped.Close)
+
+        def wait() -> None:
+            result = win32event.WaitForMultipleObjects([parent, stopped], False, win32event.INFINITE)
+            if result == win32event.WAIT_OBJECT_0:
+                server.should_exit = True
+
+        thread = threading.Thread(target=wait, name="datum-parent-watch", daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            win32event.SetEvent(stopped)
+            thread.join()
+
+
 def serve(project: str | Path, *, host: str = "127.0.0.1", port: int = 0,
           token: str = "", handshake: str | Path | None = None,
           ui: str | Path | None = None, parent_pid: int = 0,
@@ -83,39 +113,46 @@ def serve(project: str | Path, *, host: str = "127.0.0.1", port: int = 0,
     # очереди ядра. Прежде порт брался «свободный», закрывался и открывался
     # снова уже uvicorn — после DATUM_READY; под нагрузкой окно стучалось в
     # эту щель, получало отказ и закрывалось вместе с сервером.
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((host, port or 0))
-    sock.listen(128)
-    port = int(sock.getsockname()[1])
-    security = ServerSecurity(token=token or new_token())
-    app = create_app(project, security=security, ui=ui)
+    with ExitStack() as cleanup:
+        sock = cleanup.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+        option = socket.SO_EXCLUSIVEADDRUSE if os.name == "nt" else socket.SO_REUSEADDR
+        sock.setsockopt(socket.SOL_SOCKET, option, 1)
+        sock.bind((host, port or 0))
+        sock.listen(128)
+        port = int(sock.getsockname()[1])
+        security = ServerSecurity(token=token or new_token())
+        app = create_app(project, security=security, ui=ui)
 
-    # Сторож ставится ДО объявления готовности: если оболочка умерла, пока мы
-    # поднимались, сервер не должен пережить её ни секунды.
-    if parent_pid:
-        watch_parent(parent_pid)
-
-    # Объявление для агентов в обычном терминале (см. handshake.announce) —
-    # раньше рукопожатия: тот, кто дождался рукопожатия, вправе рассчитывать,
-    # что сервер уже виден и остальным. Снимается при выходе; если сервер убит
-    # сигналом и не успел, читатель уберёт его сам — по мёртвому pid.
-    notice = announce(port=port, token=security.token, project=str(project))
-    app.state.datum.on_shutdown.append(lambda: withdraw(notice))
-    atexit.register(withdraw, notice)
-    path = write_handshake(port=port, token=security.token, project=str(project),
-                           path=handshake)
-    print(f"{READY_MARKER} {path}", flush=True)
-    print(f"Datum слушает http://{host}:{port} — проект {project.name}",
-          file=sys.stderr, flush=True)
-
-    try:
         config = uvicorn.Config(app, host=host, port=port, log_level=log_level,
                                 access_log=False,
                                 # Второй рубеж на случай соединения, которое почему-то не
                                 # закрылось: через пять секунд сервер уходит в любом случае.
                                 timeout_graceful_shutdown=5)
-        uvicorn.Server(config).run(sockets=[sock])
-    finally:
-        withdraw(notice)
+        server = uvicorn.Server(config)
+
+        # Сторож ставится ДО объявления готовности: если оболочка умерла, пока мы
+        # поднимались, сервер не должен пережить её ни секунды.
+        if parent_pid:
+            if os.name == "nt":
+                cleanup.enter_context(_watch_windows_parent(parent_pid, server))
+            else:
+                watch_parent(parent_pid)
+
+        # Объявление для агентов в обычном терминале (см. handshake.announce) —
+        # раньше рукопожатия: тот, кто дождался рукопожатия, вправе рассчитывать,
+        # что сервер уже виден и остальным. Снимается при выходе; если сервер убит
+        # сигналом и не успел, читатель уберёт его сам — по мёртвому pid.
+        notice = announce(port=port, token=security.token, project=str(project))
+        app.state.datum.on_shutdown.append(lambda: withdraw(notice))
+        atexit.register(withdraw, notice)
+        try:
+            path = write_handshake(port=port, token=security.token, project=str(project),
+                                   path=handshake)
+            print(f"{READY_MARKER} {path}", flush=True)
+            print(f"Datum слушает http://{host}:{port} — проект {project.name}",
+                  file=sys.stderr, flush=True)
+
+            server.run(sockets=[sock])
+        finally:
+            withdraw(notice)
     return 0

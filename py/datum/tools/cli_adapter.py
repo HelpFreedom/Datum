@@ -234,7 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(spec: OpSpec, ns: argparse.Namespace) -> int:
     kwargs = _collect(spec, ns)
-    if spec.isolate and not getattr(ns, "in_process", False):
+    if spec.isolate and (sys.platform == "win32" or not getattr(ns, "in_process", False)):
         from datum.tools.isolate import run_isolated
 
         result = run_isolated(spec.fn, kwargs, headroom_mb=spec.memory_headroom_mb)

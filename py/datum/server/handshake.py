@@ -28,7 +28,7 @@ READY_MARKER = "DATUM_READY"
 
 def handshake_dir() -> Path:
     if os.name == "nt":
-        from datum.server import _win_handshake as native
+        from datum.server import _win_files as native
 
         d = Path(os.environ.get("XDG_RUNTIME_DIR") or native.local_data()) / "datum"
         with native.directory(d, create=True):
@@ -60,7 +60,7 @@ def write_handshake(*, port: int, token: str, project: str,
     target = Path(path) if path else handshake_dir() / f"{uuid.uuid4().hex}.json"
     payload = {"port": port, "token": token, "pid": os.getpid(), "project": project}
     if os.name == "nt":
-        from datum.server import _win_handshake as native
+        from datum.server import _win_files as native
 
         native.write(target, payload)
         return target
@@ -83,7 +83,7 @@ class Handshake:
 def read_handshake(path: str | Path, *, remove: bool = True) -> Handshake:
     p = Path(path)
     if os.name == "nt":
-        from datum.server import _win_handshake as native
+        from datum.server import _win_files as native
 
         data = native.read(p, remove=remove)
     else:
@@ -108,7 +108,7 @@ def read_handshake(path: str | Path, *, remove: bool = True) -> Handshake:
 def _servers_dir() -> Path:
     d = handshake_dir() / "servers"
     if os.name == "nt":
-        from datum.server import _win_handshake as native
+        from datum.server import _win_files as native
 
         with native.directory(d, create=True):
             return d
