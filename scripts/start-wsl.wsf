@@ -3,19 +3,16 @@
 <script language="VBScript"><![CDATA[
 Option Explicit
 
-If WScript.Arguments.Count <> 3 Then WScript.Quit 2
+If WScript.Arguments.Count <> 2 Then WScript.Quit 2
 
-Dim shell, command, code
+Dim shell, files, script, command
 Set shell = CreateObject("WScript.Shell")
-command = Quoted(WScript.Arguments(0)) & " --distribution " & Quoted(WScript.Arguments(1)) _
-    & " --cd " & Quoted(WScript.Arguments(2)) _
-    & " --exec /usr/bin/env DATUM_DESKTOP_LAUNCH=1 ./scripts/datum"
-code = shell.Run(command, 0, True)
-If code <> 0 Then
-    shell.Popup "Проверьте дистрибутив WSL и сборку Datum. Код завершения: " & code _
-        & vbCrLf & "Журнал окна в Linux: ~/.local/state/datum/window.log", 0, "Datum", 16
-End If
-WScript.Quit code
+Set files = CreateObject("Scripting.FileSystemObject")
+script = files.BuildPath(files.GetParentFolderName(WScript.ScriptFullName), "install-wsl-shortcut.ps1")
+command = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File " _
+    & Quoted(script) & " -Launch -Distribution " & Quoted(WScript.Arguments(0)) _
+    & " -Checkout " & Quoted(WScript.Arguments(1))
+WScript.Quit shell.Run(command, 0, True)
 
 Function Quoted(value)
     ' Run раскрывает переменные окружения. Параметры проходят без такого раскрытия.

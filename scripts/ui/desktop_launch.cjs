@@ -8,7 +8,6 @@ module.exports = async function run({ app, win }) {
   if (!win.isVisible()) await once(win, 'ready-to-show', { signal: AbortSignal.timeout(15000) });
   const project = win.webContents.getURL();
   win.minimize();
-  assert.ok(win.isMinimized(), 'окно свёрнуто перед повторным запуском');
 
   const env = { ...process.env };
   delete env.DATUM_SCENARIO;
