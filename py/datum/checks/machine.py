@@ -28,7 +28,7 @@ from datum.checks.result import CheckResult
 from datum.geom.solid import Solid
 
 __all__ = ["pin_joint", "screw_drive", "beam_deflection", "bearing_static",
-           "redundant_constraints", "JOINT_CONSTRAINTS", "SCREW_PROFILES"]
+           "redundant_constraints", "thread_strip", "JOINT_CONSTRAINTS", "SCREW_PROFILES"]
 
 
 def _mk(id_: str, title: str, status: str, message: str, **kw) -> CheckResult:
@@ -56,6 +56,30 @@ def _whole(value, key: str, lowest: int, highest: int | None = None) -> int:
 
 def _verdict(ok: bool) -> str:
     return "в допуске" if ok else "БОЛЬШЕ ДОПУСТИМОГО"
+
+
+def thread_strip(*, diameter: float, engagement: float, area_factor: float,
+                 force: float, allowable: float, safety_factor: float = 1.0) -> CheckResult:
+    """Номинальный срез витков от осевой силы по заданной площади зацепления."""
+    _positive(diameter=diameter, engagement=engagement, area_factor=area_factor,
+              allowable=allowable, safety_factor=safety_factor)
+    if area_factor > 1:
+        raise ValueError("Доля рабочей площади должна быть не больше единицы")
+    if safety_factor < 1:
+        raise ValueError("Коэффициент запаса должен быть не меньше единицы")
+    if isinstance(force, bool) or not isinstance(force, (int, float)) or not math.isfinite(force):
+        raise ValueError("Осевая сила должна быть конечным числом")
+    area = math.pi * diameter * engagement * area_factor
+    _positive(area=area)
+    stress = abs(force) / area
+    limit = allowable / safety_factor
+    if not math.isfinite(stress) or limit == 0:
+        raise ValueError("Напряжение или порог вне диапазона расчёта")
+    ok = stress <= limit
+    return _mk("thread_strip", "Номинальный срез витков", "pass" if ok else "fail",
+               f"Среднее напряжение {stress:.4g} МПа при площади {area:.4g} мм², "
+               f"порог с запасом {limit:.4g} МПа — {_verdict(ok)}",
+               value=stress, unit="МПа", op="<=", threshold=limit)
 
 
 # ------------------------------------------------------------- ось в вилке

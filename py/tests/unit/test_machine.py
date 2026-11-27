@@ -7,11 +7,33 @@ import math
 import pytest
 
 from datum.checks.machine import (beam_deflection, bearing_static, pin_joint,
-                                  redundant_constraints, screw_drive)
+                                  redundant_constraints, screw_drive, thread_strip)
 from datum.geom import box, union
 from datum.geom.measure import section_moments
 
 KGF = 9.80665
+
+
+@pytest.mark.parametrize("force, factor, stress, status", [
+    (100, 1, 3.18309886, "pass"), (-1000, 1, 31.8309886, "fail"),
+    (100, 4, 3.18309886, "fail"), (0, 1, 0, "pass"),
+])
+def test_thread_strip(force, factor, stress, status):
+    result = thread_strip(diameter=4, engagement=5, area_factor=0.5, force=force,
+                          allowable=10, safety_factor=factor)
+    assert result.value == pytest.approx(stress)
+    assert result.threshold == 10 / factor
+    assert result.status == status
+
+
+@pytest.mark.parametrize("key, value", [
+    ("engagement", 0), ("area_factor", 1.01), ("force", float("nan")),
+    ("safety_factor", 0.9), ("diameter", float("inf")), ("allowable", -1),
+])
+def test_thread_strip_invalid(key, value):
+    args = dict(diameter=4, engagement=5, area_factor=0.5, force=100, allowable=10)
+    with pytest.raises(ValueError):
+        thread_strip(**{**args, key: value})
 
 
 def _by_tail(results):
