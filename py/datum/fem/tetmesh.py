@@ -42,6 +42,7 @@ fTetWild — он не подгоняет узлы к поверхности, а
 
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 import pathlib
 import time
@@ -85,14 +86,12 @@ def _wrapper():
             "мешер fTetWild не установлен: нет пакета pytetwild. "
             "Поставьте `pip install pytetwild` — pyvista при этом НЕ нужен, "
             "библиотека берётся из пакета напрямую")
-    root = pathlib.Path(list(spec.submodule_search_locations)[0])
-    found = sorted(root.glob("PyfTetWildWrapper*.so"))
-    if not found:
-        raise FemError(
-            f"в пакете pytetwild нет библиотеки PyfTetWildWrapper*.so "
-            f"(смотрел в {root}). Похоже, пакет собран иначе, чем ожидалось")
-    module_spec = importlib.util.spec_from_file_location(
-        "PyfTetWildWrapper", found[0])
+    module_spec = importlib.machinery.PathFinder.find_spec(
+        "PyfTetWildWrapper", spec.submodule_search_locations)
+    if module_spec is None or not isinstance(module_spec.loader,
+                                             importlib.machinery.ExtensionFileLoader):
+        raise FemError("в пакете pytetwild нет нативной библиотеки PyfTetWildWrapper "
+                       "для этого интерпретатора")
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)
     if not hasattr(module, "tetrahedralize_mesh"):
@@ -319,8 +318,9 @@ def tet_meshes(solid: Solid | None, edges: list[float], *, epsilon: float = DEFA
                 while queue and len(running) < limit:
                     g, k, e = queue.pop(0)
                     running.append((*start(g, k, e), g, k, e, False))
-                proc, dst, g, k, e, retried = running.pop(0)
+                proc, dst, g, k, e, retried = running[0]
                 _, err = proc.communicate()
+                running.pop(0)
                 if proc.returncode != 0 and not retried:
                     # fTetWild не детерминирован и изредка падает сам (SIGFPE на плече
                     # руки один раз из нескольких, на сетке, что потом строилась) — повтор.
@@ -330,10 +330,13 @@ def tet_meshes(solid: Solid | None, edges: list[float], *, epsilon: float = DEFA
                     tail = err.decode("utf-8", "replace").strip().splitlines()[-3:]
                     raise FemError(f"мешер (ребро {e:g}) упал с кодом {proc.returncode}: "
                                    + " | ".join(tail))
-                r = np.load(dst)
-                out[(g, k)] = _finish_mesh(r["points"], r["tets"], float(r["ms"]), e, epsilon)
+                with np.load(dst) as result:
+                    out[(g, k)] = _finish_mesh(result["points"], result["tets"],
+                                               float(result["ms"]), e, epsilon)
         finally:
             for proc, *_ in running:
                 proc.kill()
+            for proc, *_ in running:
+                proc.communicate()
     result = [[out[(g, k)] for k in range(len(es))] for g, (_, es) in enumerate(groups)]
     return result[0] if batch is None else result
