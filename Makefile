@@ -37,6 +37,7 @@ ui: build
 	DATUM_SCENARIO=scripts/ui/resize.cjs DATUM_OUT=$(SCRATCH)/resize.png npm start -- examples/latch
 	DATUM_SCENARIO=scripts/ui/camera.cjs DATUM_OUT=$(SCRATCH)/camera.png npm start -- examples/latch
 	DATUM_SCENARIO=scripts/ui/switch.cjs npm start -- examples/latch
+	XDG_CONFIG_HOME=$(SCRATCH)/desktop-config DATUM_DESKTOP_LAUNCH=1 DATUM_SCENARIO=scripts/ui/desktop_launch.cjs npm start -- examples/latch
 	rm -rf $(SCRATCH)/import && $(PY) -m datum.cli init $(SCRATCH)/import
 	DATUM_SCENARIO=scripts/ui/import.cjs DATUM_OUT=$(SCRATCH)/import.png npm start -- $(SCRATCH)/import
 	rm -rf $(SCRATCH)/latch-joint && cp -r examples/latch $(SCRATCH)/latch-joint && rm -rf $(SCRATCH)/latch-joint/.datum

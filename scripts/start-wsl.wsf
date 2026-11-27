@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<job>
+<script language="VBScript"><![CDATA[
+Option Explicit
+
+If WScript.Arguments.Count <> 2 Then WScript.Quit 2
+
+Dim shell, files, script, command
+Set shell = CreateObject("WScript.Shell")
+Set files = CreateObject("Scripting.FileSystemObject")
+script = files.BuildPath(files.GetParentFolderName(WScript.ScriptFullName), "install-wsl-shortcut.ps1")
+command = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File " _
+    & Quoted(script) & " -Launch -Distribution " & Quoted(WScript.Arguments(0)) _
+    & " -Checkout " & Quoted(WScript.Arguments(1))
+WScript.Quit shell.Run(command, 0, True)
+
+Function Quoted(value)
+    ' Run раскрывает переменные окружения. Параметры проходят без такого раскрытия.
+    If InStr(value, """") > 0 Or InStr(value, "%") > 0 Then WScript.Quit 2
+    Quoted = """" & value & """"
+End Function
+]]></script>
+</job>
