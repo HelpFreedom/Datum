@@ -26,6 +26,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+from datum.process import process_alive
+
 __all__ = ["FILE", "WindowStateError", "sanitize", "save", "load", "describe", "SERVING"]
 
 #: Операция исполняется сервером окна: событие из её ответа дойдёт до окна.
@@ -166,18 +168,6 @@ def save(root: str | Path, state: dict, *, pid: int | None = None) -> dict:
     return record
 
 
-def _alive(pid: Any) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:                             # pragma: no cover — чужой процесс
-        return True
-    return True
-
-
 def load(root: str | Path) -> dict | None:
     """Последнее, что сообщило окно, с возрастом и тем, живо ли оно; None — не сообщало."""
     path = Path(root) / FILE
@@ -189,7 +179,7 @@ def load(root: str | Path) -> dict | None:
         return None
     age = (dt.datetime.now().astimezone() - at).total_seconds()
     return {**state, "at": record["at"], "age_s": round(max(0.0, age), 1),
-            "open": _alive(record.get("pid"))}
+            "open": process_alive(record.get("pid"), on_denied=True)}
 
 
 def _fmt(v: list[float]) -> str:

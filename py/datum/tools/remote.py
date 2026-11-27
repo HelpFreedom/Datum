@@ -31,6 +31,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from datum.process import process_alive
 from datum.tools.registry import OpSpec
 
 __all__ = ["Endpoint", "endpoint_from_env", "remote_callable", "routed_callable",
@@ -126,11 +127,8 @@ def endpoint_alive(endpoint: Endpoint) -> bool:
     окружения у агента осталась. Раньше после этого мёртвыми становились ВСЕ
     инструменты, включая те, которым сервер вовсе не нужен.
     """
-    if endpoint.pid:
-        try:
-            os.kill(endpoint.pid, 0)
-        except (ProcessLookupError, PermissionError):
-            return False
+    if endpoint.pid and not process_alive(endpoint.pid):
+        return False
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         probe = urllib.request.Request(f"{endpoint.base}/healthz",

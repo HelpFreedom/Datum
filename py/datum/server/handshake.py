@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from datum.process import process_alive
+
 __all__ = ["handshake_dir", "write_handshake", "read_handshake", "READY_MARKER",
            "announce", "withdraw", "announced"]
 
@@ -144,16 +146,6 @@ def withdraw(path: Path | None) -> None:
         Path(path).unlink(missing_ok=True)
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:                        # pragma: no cover — чужой процесс
-        return False
-    return True
-
-
 def announced(project: str | Path) -> list[Handshake]:
     """Объявления живых серверов этого проекта. Мёртвые попутно убираются.
 
@@ -170,7 +162,7 @@ def announced(project: str | Path) -> list[Handshake]:
             h = read_handshake(f, remove=False)
         except (OSError, ValueError, KeyError):
             continue
-        if not _alive(h.pid):
+        if not process_alive(h.pid):
             f.unlink(missing_ok=True)             # сервер упал, не прибрав за собой
             continue
         if h.project == target:
