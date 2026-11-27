@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,28 @@ from datum.doc.snapshot import DENSITY, Snapshot, list_snapshots
 
 ROOT = Path(__file__).resolve().parents[3]
 LATCH = ROOT / "examples" / "latch"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="для проверки нужен Git")
+def test_snapshot_records_project_head(pr, monkeypatch):
+    def git(root, *args):
+        return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
+
+    from datum.doc.snapshot import _project_git_head
+
+    git(pr.root, "init", "-q")
+    assert _project_git_head(pr.root) is None
+    git(pr.root, "add", "datum.toml")
+    git(pr.root, "-c", "user.name=Datum", "-c", "user.email=test@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "-qm", "test")
+    head = git(pr.root, "rev-parse", "HEAD")
+    assert _project_git_head(pr.root / "parts") is None
+    monkeypatch.setenv("GIT_DIR", str(pr.root / "absent"))
+    snapshot = Snapshot.create(pr, "git")
+    assert Snapshot.load(snapshot.save(pr.root)).environment["git_head"] == head
+    assert head in snapshot.report()
+    monkeypatch.setenv("PATH", "")
+    assert _project_git_head(pr.root) is None
 
 
 @pytest.fixture

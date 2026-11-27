@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import platform
+import re
+import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -204,6 +207,7 @@ class Snapshot:
                overrides: dict[str, float] | None = None) -> "Snapshot":
         from datum.geom.measure import area, bbox
 
+        head = _project_git_head(project.root)
         material = str(project.manifest.get("printer", {}).get("material", "PLA"))
         # Плотность — из каталога материала (параметр MAT_DENSITY, его может
         # перебить проект); нет в каталоге — прежняя таблица.
@@ -259,7 +263,8 @@ class Snapshot:
             parts=parts, checks=run.as_dict(), manifest=dict(project.manifest),
             notes=notes,
             environment={"python": platform.python_version(),
-                         "datum": _datum_version(), "material": material})
+                         "datum": _datum_version(), "material": material,
+                         **({"git_head": head} if head else {})})
 
     # ---------------------------------------------------------------- файл
     def as_dict(self) -> dict:
@@ -317,6 +322,8 @@ class Snapshot:
         lines = [f"Снимок «{self.tag}» ({self.created}), проект {self.project}"]
         if self.notes:
             lines.append(f"  {self.notes}")
+        if head := self.environment.get("git_head"):
+            lines.append(f"Git HEAD при начале снимка: {head} (состояние рабочего дерева не проверялось)")
         lines.append("Детали:")
         for p in self.parts.values():
             if p.ok:
@@ -340,6 +347,25 @@ class Snapshot:
                         " — сплошным телом (объём × плотность): по настройкам печати меньше"))
         lines.append("Готов к печати: " + ("да" if self.print_ready else "нет"))
         return "\n".join(lines)
+
+
+def _project_git_head(root: Path) -> str | None:
+    """Коммит собственного репозитория проекта, включая связанное рабочее дерево."""
+    git_dir = Path(root) / ".git"
+    if not git_dir.exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "--no-optional-locks", "--git-dir", str(git_dir.resolve()),
+             "rev-parse", "--verify", "HEAD^{commit}"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=3, env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    head = result.stdout.strip()
+    if result.returncode == 0 and re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})", head):
+        return head.decode("ascii")
+    return None
 
 
 def _digest_of(project, part_name: str) -> str:
