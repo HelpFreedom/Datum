@@ -358,7 +358,7 @@ def _project_git_head(root: Path) -> str | None:
         result = subprocess.run(
             ["git", "--no-optional-locks", "--git-dir", str(git_dir.resolve()),
              "rev-parse", "--verify", "HEAD^{commit}"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            input=b"", capture_output=True,
             timeout=3, env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
     except (OSError, subprocess.TimeoutExpired):
         return None

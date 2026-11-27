@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -32,8 +33,10 @@ def test_snapshot_records_project_head(pr, monkeypatch):
     head = git(pr.root, "rev-parse", "HEAD")
     assert _project_git_head(pr.root / "parts") is None
     monkeypatch.setenv("GIT_DIR", str(pr.root / "absent"))
-    snapshot = Snapshot.create(pr, "git")
-    assert Snapshot.load(snapshot.save(pr.root)).environment["git_head"] == head
+    raw = subprocess.check_output([sys.executable, "-m", "datum.cli", "snapshot",
+                                   str(pr.root), "git", "--json"], text=True)
+    snapshot = Snapshot.load(pr.root / json.loads(raw)["path"])
+    assert snapshot.environment["git_head"] == head
     assert head in snapshot.report()
     monkeypatch.setenv("PATH", "")
     assert _project_git_head(pr.root) is None
