@@ -46,3 +46,10 @@ def test_failed_change_releases_lock(tmp_path):
     with pytest.raises(ValueError, match="отказ"):
         checks_edit.update(tmp_path, fail)
     assert checks_edit.update(tmp_path, lambda text: text + "- id: next\n") == "- id: next\n"
+
+
+def test_existing_write_only_lock(tmp_path):
+    lock = tmp_path / ".datum" / "checks.lock"
+    lock.parent.mkdir()
+    lock.touch(mode=0o200)
+    assert checks_edit.update(tmp_path, lambda text: text + "- id: ok\n") == "- id: ok\n"

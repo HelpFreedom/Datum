@@ -13,7 +13,7 @@ from pathlib import Path
 def exclusive_lock(path: Path):
     """Все писатели открывают один постоянный файл рядом с данными."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as lock:
+    with path.open("ab") as lock:
         if os.name == "nt":
             import msvcrt
 
