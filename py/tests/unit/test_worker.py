@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 
 import pytest
@@ -29,6 +30,22 @@ def test_result_comes_back():
     assert out.ok and out.payload["answer"] == 42
     assert out.mesh == b"\x01\x02"
     assert out.ms > 0
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="свойство процесса Linux")
+def test_only_the_worker_disables_core_dumps():
+    import ctypes
+
+    PR_GET_DUMPABLE = 3
+    libc = ctypes.CDLL(None)
+    parent = libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)
+
+    def job():
+        return {"status": "ok", "dumpable": libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)}, b""
+
+    out = run_in_worker(job, limits=FAST)
+    assert out.ok and out.payload["dumpable"] == 0
+    assert libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) == parent
 
 
 def test_arguments_are_passed():
