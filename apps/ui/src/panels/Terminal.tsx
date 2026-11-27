@@ -1,8 +1,8 @@
 /**
- * Терминал со встроенным системным Claude Code.
+ * Терминал со встроенным системным агентом.
  *
  * Datum не пишет своего агента, своего чата, своих диалогов разрешений и своего
- * управления сессиями. Здесь — ваш системный `claude` как есть, со всеми его
+ * управления сессиями. Здесь работает Claude Code или Codex со своими
  * настройками, навыками и механизмом разрешений. Окно только показывает его
  * вывод и передаёт нажатия.
  *
@@ -21,7 +21,7 @@
  */
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as Xterm } from "@xterm/xterm";
-import { Play, RotateCcw, SquareTerminal } from "lucide-react";
+import { Play, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import "@xterm/xterm/css/xterm.css";
@@ -29,9 +29,14 @@ import "@xterm/xterm/css/xterm.css";
 import { useDoc } from "../store/doc";
 import { useUi } from "../store/ui";
 
+type AgentKind = "claude" | "codex";
+const AGENT_LABELS = { claude: "Claude Code", codex: "Codex" };
+
 interface AgentBridge {
-  start: (cols: number, rows: number) => Promise<{ ok: true; backlog?: string } | { ok: false; error: string }>;
-  status?: () => Promise<{ running: boolean }>;
+  start: (cols: number, rows: number, kind: AgentKind) => Promise<
+    { ok: true; kind: AgentKind; backlog?: string } | { ok: false; error: string }
+  >;
+  status?: () => Promise<{ running: boolean; kind: AgentKind | null }>;
   write: (data: string) => void;
   resize: (cols: number, rows: number) => void;
   onData: (callback: (chunk: string) => void) => () => void;
@@ -74,28 +79,24 @@ export function TerminalPanel({ visible }: { visible: boolean }) {
   const termRef = useRef<Xterm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const started = useRef(false);
+  const [kind, setKind] = useState<AgentKind>("claude");
   const [problem, setProblem] = useState<string | null>(null);
-  // Завершился ли claude: тогда вместо терминала без процесса — кнопка
-  // перезапуска. Раньше для этого приходилось закрывать и открывать панель.
+  // После завершения можно снова выбрать агента, не закрывая панель.
   const [exited, setExited] = useState<number | null>(null);
   const [wanted, setWanted] = useState(false);
   const [ready, setReady] = useState(false);
-  const ask = useUi((s) => s.agentAsk);
   const project = useDoc((s) => s.project);
   const { setAgent } = useUi.getState();
 
   const cleanupRef = useRef<(() => void) | null>(null);
 
-  // Просьба снаружи — «Агент» в строке состояния или меню.
-  useEffect(() => {
-    if (ask > 0) setWanted(true);
-  }, [ask]);
-
-  // claude уже работает — окно перезагрузилось после падения: подключаемся
-  // сразу, просьба была ещё до падения.
+  // Окно перезагрузилось: подключаемся к уже работающему агенту.
   useEffect(() => {
     void bridge()?.status?.().then((s) => {
-      if (s.running) setWanted(true);
+      if (s.running && s.kind) {
+        setKind(s.kind);
+        setWanted(true);
+      }
     }).catch(() => undefined);
   }, []);
 
@@ -130,7 +131,7 @@ export function TerminalPanel({ visible }: { visible: boolean }) {
       term.onData((data) => agent.write(data));
       const offData = agent.onData((chunk) => term.write(chunk));
       const offExit = agent.onExit((code) => {
-        term.writeln(`\r\n\x1b[90m— claude завершился, код ${code} —\x1b[0m`);
+        term.writeln(`\r\n\x1b[90m— агент завершился, код ${code} —\x1b[0m`);
         started.current = false;
         setExited(code);
         setAgent("exited");
@@ -165,13 +166,14 @@ export function TerminalPanel({ visible }: { visible: boolean }) {
   // разговор с агентом обязан пережить случайное нажатие на «скрыть».
   useEffect(() => () => cleanupRef.current?.(), []);
 
-  /** Поднять claude в терминале — при первой просьбе и по кнопке. */
-  const launch = () => {
+  /** Запустить выбранный агент или подключиться к уже работающему. */
+  const launch = (selected = kind) => {
     const term = termRef.current;
     const fit = fitRef.current;
     const agent = bridge();
     if (!term || !fit || !agent || started.current) return;
     started.current = true;
+    setKind(selected);
     setProblem(null);
     setExited(null);
     setAgent("starting");
@@ -181,19 +183,21 @@ export function TerminalPanel({ visible }: { visible: boolean }) {
       /* размер ещё не устоялся */
     }
     agent
-      .start(term.cols, term.rows)
+      .start(term.cols, term.rows, selected)
       .then((result) => {
+        if (!started.current) return;   // агент успел выйти до ответа IPC
         if (!result.ok) {
           setProblem(result.error);
           setAgent("failed");
           started.current = false;
         } else {
+          setKind(result.kind);
           if (result.backlog !== undefined) {
             // Подключились к работающему: экран — из хвоста. То, что успело
             // прийти до ответа, в хвосте уже есть, поэтому сначала — сброс.
             term.reset();
             term.write(result.backlog);
-            // Толчок размером: TUI claude перерисуется целиком под этот терминал.
+            // Толчок размером: TUI агента перерисуется под этот терминал.
             agent.resize(term.cols, Math.max(5, term.rows - 1));
             window.setTimeout(() => agent.resize(term.cols, term.rows), 120);
           }
@@ -213,7 +217,7 @@ export function TerminalPanel({ visible }: { visible: boolean }) {
   // Терминал готов — запускаем: просьба уже была, иначе его бы не создали.
   useEffect(() => {
     if (!ready || started.current || exited !== null) return;
-    const id = window.setTimeout(launch, 80);
+    const id = window.setTimeout(() => launch(), 80);
     return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
@@ -227,35 +231,46 @@ export function TerminalPanel({ visible }: { visible: boolean }) {
   }, [visible, ready]);
 
   const available = Boolean(bridge());
+  const chooseAgent = !wanted || problem !== null || exited !== null;
 
   return (
     <div className="terminal" style={{ display: visible ? "flex" : "none" }}>
-      {!wanted && (
+      {chooseAgent && (
         <div className="agent-intro">
           <div className="agent-intro-icon">
             <SquareTerminal size={26} strokeWidth={1.5} />
           </div>
           <div className="agent-intro-text">
-            <div className="agent-intro-title">Claude Code</div>
+            <div className="agent-intro-title">Агент проекта</div>
             <div className="agent-intro-sub">
-              Ваш системный <code>claude</code> в каталоге{" "}
-              <code>{project.split("/").slice(-2).join("/") || "проекта"}</code>. Работает теми
-              же операциями, что и окно: его сборки и правки появляются здесь сразу.
+              Системный агент работает в каталоге{" "}
+              <code>{project.split("/").slice(-2).join("/") || "проекта"}</code> и
+              получает операции Datum через MCP.
             </div>
           </div>
-          <button className="primary" disabled={!available} onClick={() => setWanted(true)}>
-            <Play size={13} fill="currentColor" /> Запустить Claude Code
-          </button>
+          <div className="agent-intro-actions">
+            {(["claude", "codex"] as const).map((choice) => (
+              <button
+                key={choice}
+                className={kind === choice ? "primary" : "ghost"}
+                disabled={!available}
+                onClick={() => {
+                  if (ready) launch(choice);
+                  else {
+                    setKind(choice);
+                    setWanted(true);
+                  }
+                }}
+              >
+                <Play size={13} fill="currentColor" /> Запустить {AGENT_LABELS[choice]}
+              </button>
+            ))}
+          </div>
         </div>
       )}
       {problem && <div className="alert">{problem}</div>}
       {exited !== null && !problem && (
-        <div className="terminal-exit">
-          <span className="dim">claude завершился (код {exited}).</span>
-          <button className="ghost" onClick={launch}>
-            <RotateCcw size={13} /> Перезапустить
-          </button>
-        </div>
+        <div className="terminal-exit dim">{AGENT_LABELS[kind]} завершился (код {exited}).</div>
       )}
       <div
         ref={hostRef}

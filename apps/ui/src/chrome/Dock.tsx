@@ -15,7 +15,7 @@ import { Grip } from "./Grip";
 import { DOCK_DEFAULT } from "./layout";
 
 const TABS: { key: DockTab; label: string; Icon: typeof ListTree }[] = [
-  { key: "agent", label: "Claude Code", Icon: SquareTerminal },
+  { key: "agent", label: "Агент", Icon: SquareTerminal },
   { key: "log", label: "Лента", Icon: ListTree },
 ];
 

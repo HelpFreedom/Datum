@@ -53,8 +53,6 @@ interface UiState {
   /** Ширины боковых панелей; null — умолчание из CSS (оно ужимается в узком окне). */
   leftWidth: number | null;
   rightWidth: number | null;
-  /** Сколько раз просили запустить агента: терминал ловит рост и стартует. */
-  agentAsk: number;
   agent: AgentState;
 
   tool: Tool;
@@ -102,7 +100,6 @@ interface UiState {
   applyLayout: (saved: SavedLayout) => void;
   /** Что запомнить: только заданное человеком. */
   savedLayout: () => SavedLayout;
-  askAgent: () => void;
   setAgent: (state: AgentState) => void;
   /** Всё, кроме вьюпорта, — убрать; повторно — вернуть как было. */
   toggleFocus: () => void;
@@ -142,7 +139,6 @@ export const useUi = create<UiState>((set, get) => ({
   dockHeight: DOCK_DEFAULT,
   leftWidth: null,
   rightWidth: null,
-  agentAsk: 0,
   agent: "idle",
 
   tool: "none",
@@ -186,7 +182,6 @@ export const useUi = create<UiState>((set, get) => ({
     if (s.rightWidth !== null) out.right = s.rightWidth;
     return out;
   },
-  askAgent: () => set((s) => ({ dock: "agent", dockOpen: true, agentAsk: s.agentAsk + 1 })),
   setAgent: (agent) => set({ agent }),
   toggleFocus: () => {
     const s = get();

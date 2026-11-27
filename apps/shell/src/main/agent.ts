@@ -1,14 +1,14 @@
 /**
- * Встроенный системный Claude Code.
+ * Встроенные системные Claude Code и Codex.
  *
- * Datum НЕ ПИШЕТ своего агента. В окне — терминал, в котором запущен ваш
- * системный `claude`. Всё, что при нём, остаётся вашим и работает как обычно:
+ * Datum запускает системный агент в терминале проекта. Его собственные
+ * настройки и сессии работают как обычно:
  * авторизация, выбор модели, настройки, навыки, плагины, хуки, slash-команды,
  * механизм разрешений, история сессий. Datum в это не вмешивается.
  *
- * Подключений два. Временный `--mcp-config`, указывающий на
- * `datum mcp --stdio`, и `--plugin-dir` с навыком Datum (`plugin.ts`) — где
- * бы ни лежал проект. Тот, увидев путь к файлу рукопожатия, становится тонким
+ * Claude Code получает временный `--mcp-config` и плагин Datum. Codex получает
+ * настройку MCP через `-c` на время этого процесса. В обоих случаях MCP-клиент,
+ * увидев путь к файлу рукопожатия, становится тонким
  * клиентом РАБОТАЮЩЕГО сервера — поэтому всё, что агент делает, идёт тем же
  * путём, что кнопка в окне, и видно немедленно.
  *
@@ -19,6 +19,7 @@ import { spawn as ptySpawn, type IPty } from "node-pty";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { pythonExe } from "./paths";
 import { Backlog } from "./backlog";
@@ -30,6 +31,12 @@ export interface AgentEndpoint {
   project: string;
 }
 
+export type AgentKind = "claude" | "codex";
+const AGENTS = {
+  claude: { label: "Claude Code", override: "DATUM_CLAUDE" },
+  codex: { label: "Codex", override: "DATUM_CODEX" },
+} as const;
+
 /** Куда класть временные файлы сеанса: как у Python-стороны. */
 function runtimeDir(): string {
   const base = process.env.XDG_RUNTIME_DIR || os.tmpdir();
@@ -38,37 +45,41 @@ function runtimeDir(): string {
   return dir;
 }
 
-/** Найти системный `claude`. Свой мы не носим и не подменяем. */
-export function findClaude(): string | null {
-  const explicit = process.env.DATUM_CLAUDE;
+/** Найти системный агент или явно заданный путь. */
+function findAgent(kind: AgentKind): string | null {
+  const explicit = process.env[AGENTS[kind].override];
   if (explicit && fs.existsSync(explicit)) return explicit;
   const candidates = [
-    path.join(os.homedir(), ".local", "bin", "claude"),
-    "/usr/local/bin/claude",
-    "/usr/bin/claude",
+    path.join(os.homedir(), ".local", "bin", kind),
+    `/usr/local/bin/${kind}`,
+    `/usr/bin/${kind}`,
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return candidate;
   }
-  for (const dir of (process.env.PATH ?? "").split(":")) {
-    const candidate = path.join(dir, "claude");
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+    const candidate = path.join(dir, kind);
     if (dir && fs.existsSync(candidate)) return candidate;
   }
   return null;
 }
 
-export type StartResult = { ok: true; backlog?: string } | { ok: false; error: string };
+export type StartResult = { ok: true; kind: AgentKind; backlog?: string } | { ok: false; error: string };
 
 export class Agent {
   private pty: IPty | null = null;
   private files: string[] = [];
-  private dir = "";
+  private provider: AgentKind | null = null;
   private readonly backlog = new Backlog();
   /** Когда запущен нынешний `claude`, мс; 0 — не запущен. */
   private started = 0;
 
   get running(): boolean {
     return this.pty !== null;
+  }
+
+  get kind(): AgentKind | null {
+    return this.provider;
   }
 
   /** Время запуска идущего `claude` — чтобы не принять прошлую сессию за эту. */
@@ -83,19 +94,30 @@ export class Agent {
    * /proc/<pid>/environ любому процессу пользователя. В окружении — только
    * путь.
    */
-  private prepare(endpoint: AgentEndpoint): string {
-    this.dir = runtimeDir();
-    const tag = `${process.pid}-${Date.now().toString(36)}`;
+  private prepare(endpoint: AgentEndpoint, kind: AgentKind): ReturnType<typeof agentArgs> {
+    const dir = runtimeDir();
+    const tag = randomUUID();
 
-    const handshake = path.join(this.dir, `agent-${tag}.json`);
+    const handshake = path.join(dir, `agent-${tag}.json`);
+    this.files = [handshake];
     fs.writeFileSync(
       handshake,
       JSON.stringify({ port: endpoint.port, token: endpoint.token,
                        pid: process.pid, project: endpoint.project }),
-      { mode: 0o600 },
+      { mode: 0o600, flag: "wx" },
     );
 
-    const config = path.join(this.dir, `mcp-${tag}.json`);
+    const args = ["-m", "datum.cli", "mcp", "--stdio"];
+    if (kind === "codex") {
+      // Отдельное имя не смешивает stdio с пользовательским сервером `datum`.
+      const settings = `mcp_servers.datum_window={command=${JSON.stringify(pythonExe)},` +
+        `args=${JSON.stringify(args)},env={DATUM_HANDSHAKE=${JSON.stringify(handshake)}},` +
+        "startup_timeout_sec=30,required=true}";
+      return { ok: true, args: ["-c", settings] };
+    }
+
+    const config = path.join(dir, `mcp-${tag}.json`);
+    this.files.push(config);
     fs.writeFileSync(
       config,
       JSON.stringify(
@@ -103,7 +125,7 @@ export class Agent {
           mcpServers: {
             datum: {
               command: pythonExe,
-              args: ["-m", "datum.cli", "mcp", "--stdio"],
+              args,
               env: { DATUM_HANDSHAKE: handshake },
             },
           },
@@ -111,11 +133,10 @@ export class Agent {
         null,
         2,
       ),
-      { mode: 0o600 },
+      { mode: 0o600, flag: "wx" },
     );
 
-    this.files = [handshake, config];
-    return config;
+    return agentArgs(config);
   }
 
   start(
@@ -123,32 +144,23 @@ export class Agent {
     size: { cols: number; rows: number },
     onData: (chunk: string) => void,
     onExit: (code: number) => void,
+    kind: AgentKind = "claude",
   ): StartResult {
     // Уже работает — окно перезагрузилось (упал процесс отрисовки): отдаём
     // хвост вывода, и страница показывает экран как был. Данные дальше идут
     // тем же каналом ПОСЛЕ этого ответа, так что хвост и поток не расходятся.
-    if (this.pty) {
+    if (this.pty && this.provider) {
       this.resize(size.cols, size.rows);
-      return { ok: true, backlog: this.backlog.text() };
+      return { ok: true, kind: this.provider, backlog: this.backlog.text() };
     }
 
-    const claude = findClaude();
-    if (!claude) {
+    const executable = findAgent(kind);
+    if (!executable) {
       return {
         ok: false,
-        error:
-          "системный claude не найден. Datum не носит своего: поставьте Claude Code " +
-          "или укажите путь переменной DATUM_CLAUDE",
+        error: `Системный ${kind} не найден. Установите ${AGENTS[kind].label} ` +
+          `в той же системе, где работает Datum, или укажите путь в ${AGENTS[kind].override}.`,
       };
-    }
-
-    const config = this.prepare(endpoint);
-    const launch = agentArgs(config);
-    if (!launch.ok) {
-      // Файлы сеанса (рукопожатие с токеном) уже записаны — убрать: прежде
-      // они оставались, а следующий `prepare` забывал о них.
-      this.cleanup();
-      return launch;
     }
 
     // Прокси: требование пользователя — встроенный claude ходит через
@@ -161,12 +173,10 @@ export class Agent {
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
       TERM: "xterm-256color",
-      HTTP_PROXY: proxy,
-      HTTPS_PROXY: proxy,
-      http_proxy: proxy,
-      https_proxy: proxy,
-      NO_PROXY: "127.0.0.1,localhost,::1",
-      no_proxy: "127.0.0.1,localhost,::1",
+      ...(kind === "claude" ? {
+        HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: proxy, https_proxy: proxy,
+        NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1",
+      } : {}),
     };
     delete env.DATUM_HANDSHAKE;   // его получает только MCP-клиент, из конфига
 
@@ -190,7 +200,12 @@ export class Agent {
 
     let pty: IPty;
     try {
-      pty = ptySpawn(claude, launch.args, {
+      const launch = this.prepare(endpoint, kind);
+      if (!launch.ok) {
+        this.cleanup();
+        return launch;
+      }
+      pty = ptySpawn(executable, launch.args, {
         name: "xterm-256color",
         cols: Math.max(20, size.cols),
         rows: Math.max(5, size.rows),
@@ -204,6 +219,7 @@ export class Agent {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
     this.pty = pty;
+    this.provider = kind;
     this.started = Date.now();
 
     // Обработчики привязаны к СВОЕМУ процессу и своим файлам (идея из Kadr).
@@ -222,11 +238,12 @@ export class Agent {
       removeFiles(files);
       if (this.pty === pty) {
         this.pty = null;
+        this.provider = null;
         this.files = [];
         onExit(exitCode);
       }
     });
-    return { ok: true };
+    return { ok: true, kind };
   }
 
   write(data: string): void {
@@ -244,6 +261,7 @@ export class Agent {
   stop(): void {
     const pty = this.pty;
     this.pty = null;
+    this.provider = null;
     try {
       pty?.kill();
     } catch {

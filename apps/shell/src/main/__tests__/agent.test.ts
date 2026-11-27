@@ -16,12 +16,18 @@ interface FakePty {
   data: (chunk: string) => void;
   exit: (code: number) => void;
   killed: boolean;
+  command: string;
+  args: string[];
+  options: { cwd: string; env: Record<string, string> };
 }
 const spawned: FakePty[] = [];
 
 vi.mock("node-pty", () => ({
-  spawn: () => {
-    const fake: FakePty = { pid: 1000 + spawned.length, data: () => {}, exit: () => {}, killed: false };
+  spawn: (command: string, args: string[], options: FakePty["options"]) => {
+    const fake: FakePty = {
+      pid: 1000 + spawned.length, data: () => {}, exit: () => {}, killed: false,
+      command, args, options,
+    };
     spawned.push(fake);
     return {
       pid: fake.pid,
@@ -102,6 +108,34 @@ describe("агент", () => {
     spawned[0].data("экран до перезагрузки окна");
     const again = agent.start(endpoint, size, () => {}, () => {});
     expect(spawned.length).toBe(1);
-    expect(again).toEqual({ ok: true, backlog: "экран до перезагрузки окна" });
+    expect(again).toEqual({ ok: true, kind: "claude", backlog: "экран до перезагрузки окна" });
+  });
+
+  it("запускает Codex в проекте с временным MCP и без принудительного прокси Claude", () => {
+    process.env.DATUM_CODEX = process.execPath;
+    process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+    process.env.DATUM_PROXY = "http://127.0.0.1:10808";
+    const agent = new Agent();
+    const project = { ...endpoint, token: "fixture-token", project: "/tmp/проект с пробелом" };
+    expect(agent.start(project, size, () => {}, () => {}, "codex")).toEqual({ ok: true, kind: "codex" });
+    const [terminal] = spawned;
+    const [handshake] = sessionFiles().map((file) => path.join(runtime, "datum", file));
+    expect(sessionFiles()).toHaveLength(1);
+    expect(terminal.command).toBe(process.execPath);
+    expect(terminal.options.cwd).toBe(project.project);
+    expect(terminal.options.env.HTTPS_PROXY).toBe(process.env.HTTPS_PROXY);
+    expect(terminal.options.env.DATUM_HANDSHAKE).toBeUndefined();
+    expect(terminal.args[0]).toBe("-c");
+    expect(terminal.args[1]).toContain("mcp_servers.datum_window=");
+    expect(terminal.args[1]).toContain('args=["-m","datum.cli","mcp","--stdio"]');
+    expect(terminal.args[1]).toContain(`DATUM_HANDSHAKE=${JSON.stringify(handshake)}`);
+    expect(terminal.args.join(" ")).not.toContain(project.token);
+    expect(JSON.parse(fs.readFileSync(handshake, "utf8"))).toMatchObject(project);
+    expect(agent.kind).toBe("codex");
+    expect(agent.start(project, size, () => {}, () => {})).toMatchObject({ ok: true, kind: "codex" });
+    expect(spawned).toHaveLength(1);
+    terminal.exit(0);
+    expect(agent.kind).toBeNull();
+    expect(sessionFiles()).toEqual([]);
   });
 });

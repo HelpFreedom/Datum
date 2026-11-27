@@ -37,7 +37,7 @@ export function StatusBar() {
   const selected = useDoc((s) => s.selected);
   const agent = useUi((s) => s.agent);
   const draft = Object.values(parts).some((p) => p.draft);
-  const { askAgent } = useUi.getState();
+  const { showDock } = useUi.getState();
   const [openError, setOpenError] = useState("");
 
   useEffect(() => onOpenError(setOpenError), []);
@@ -73,7 +73,7 @@ export function StatusBar() {
 
   return (
     <footer className="status">
-      <button className="status-item" title="Системный claude в окне проекта" onClick={askAgent}>
+      <button className="status-item" title="Системный агент в окне проекта" onClick={() => showDock("agent")}>
         <span className={`led ${state.tone}`} /> Агент
         <span className="status-dim">{state.text}</span>
       </button>

@@ -285,8 +285,8 @@ export function menus(): { label: string; items: MenuItem[] }[] {
         { label: "Параметры", onSelect: () => ui.showRight("params") },
         { heading: "Снизу" },
         // Пункт меню — такая же просьба, как кнопка в доке и «Агент» в строке
-        // состояния: открывает вкладку И запускает claude, если он ещё не запущен.
-        { label: "Claude Code", onSelect: ui.askAgent },
+        // состояния: открывает вкладку и запускает выбранного агента.
+        { label: "Агент проекта", onSelect: () => ui.showDock("agent") },
         { label: "Лента", onSelect: () => ui.showDock("log") },
       ],
     },

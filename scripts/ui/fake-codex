@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Проверить конфигурацию сеанса и обратиться к настоящему MCP Datum без сети."""
+
+import json
+import os
+import subprocess
+import sys
+import tomllib
+
+prefix = "mcp_servers.datum_window="
+assert len(sys.argv) == 3 and sys.argv[1] == "-c" and sys.argv[2].startswith(prefix)
+config = tomllib.loads(sys.argv[2])["mcp_servers"]["datum_window"]
+assert "DATUM_HANDSHAKE" not in os.environ
+with open(config["env"]["DATUM_HANDSHAKE"], encoding="utf-8") as stream:
+    assert os.path.realpath(json.load(stream)["project"]) == os.getcwd()
+
+with subprocess.Popen(
+    [config["command"], *config["args"]],
+    env={**os.environ, **config["env"]},
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    text=True,
+    encoding="utf-8",
+) as mcp:
+    def rpc(method, params, request_id=None):
+        message = {"jsonrpc": "2.0", "method": method, "params": params}
+        if request_id is not None:
+            message["id"] = request_id
+        mcp.stdin.write(json.dumps(message) + "\n")
+        mcp.stdin.flush()
+        if request_id is not None:
+            for line in mcp.stdout:
+                reply = json.loads(line)
+                if reply.get("id") == request_id:
+                    assert "error" not in reply, reply
+                    return reply["result"]
+            raise RuntimeError(f"MCP завершился до ответа на {method}")
+
+    rpc("initialize", {
+        "protocolVersion": "2025-11-25", "capabilities": {},
+        "clientInfo": {"name": "datum-ui-test", "version": "1"},
+    }, 1)
+    rpc("notifications/initialized", {})
+    result = rpc("tools/call", {"name": "window_state", "arguments": {}}, 2)
+    assert not result.get("isError"), result
+    assert "window" in json.loads(result["content"][0]["text"]), result
+    mcp.stdin.close()
+
+print("CODEX_MCP_OK", flush=True)
+for line in sys.stdin:
+    print(f"эхо: {line.strip()}", flush=True)

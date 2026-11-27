@@ -1004,6 +1004,7 @@ button.chip:hover:not(:disabled) { color: var(--accent-bright); border-color: va
   box-shadow: 0 0 18px rgba(255, 140, 90, 0.2);
 }
 .agent-intro-text { flex: 1; min-width: 0; }
+.agent-intro-actions { display: flex; flex: none; flex-direction: column; align-items: stretch; gap: 6px; }
 .agent-intro-title { font-size: 14px; font-weight: 600; color: var(--bright); }
 .agent-intro-sub { margin-top: 3px; color: var(--dim); line-height: 1.5; }
 
