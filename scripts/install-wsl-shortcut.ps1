@@ -65,11 +65,18 @@ $launcherSource = Join-Path $PSScriptRoot 'start-wsl.wsf'
 if (-not (Test-Path -LiteralPath $launcherSource -PathType Leaf)) {
     throw "Не найден сценарий запуска Datum: $launcherSource"
 }
+# Знак из apps/ui/src/chrome/Logo.tsx в формате значка Windows.
+$iconSource = Join-Path $PSScriptRoot 'datum.ico'
+if (-not (Test-Path -LiteralPath $iconSource -PathType Leaf)) {
+    throw "Не найден значок Datum: $iconSource"
+}
 $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 $launcherDirectory = Join-Path $localData 'Datum'
 New-Item -ItemType Directory -Path $launcherDirectory -Force | Out-Null
 $launcher = Join-Path $launcherDirectory 'start-wsl.wsf'
+$icon = Join-Path $launcherDirectory 'datum.ico'
 Copy-Item -LiteralPath $launcherSource -Destination $launcher
+Copy-Item -LiteralPath $iconSource -Destination $icon
 Copy-Item -LiteralPath $PSCommandPath -Destination $launcherDirectory
 
 $path = Join-Path $desktop 'Datum.lnk'
@@ -78,6 +85,7 @@ $shortcut = $shell.CreateShortcut($path)
 $shortcut.TargetPath = (Get-Command wscript.exe -CommandType Application | Select-Object -First 1).Source
 $shortcut.Arguments = '"{0}" "{1}" "{2}"' -f $launcher, $Distribution, $Checkout
 $shortcut.Description = 'Открыть Datum через WSL 2'
+$shortcut.IconLocation = "$icon,0"
 $shortcut.WorkingDirectory = $launcherDirectory
 $shortcut.WindowStyle = 1
 $shortcut.Save()
