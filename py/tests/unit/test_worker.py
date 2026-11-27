@@ -41,7 +41,7 @@ def test_only_the_worker_disables_core_dumps():
     parent = libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)
 
     def job():
-        return {"dumpable": libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)}, b""
+        return {"status": "ok", "dumpable": libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)}, b""
 
     out = run_in_worker(job, limits=FAST)
     assert out.ok and out.payload["dumpable"] == 0
