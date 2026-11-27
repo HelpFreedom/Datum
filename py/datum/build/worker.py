@@ -354,6 +354,15 @@ def _apply_limits(limits: WorkerLimits) -> None:
     setrl(resource.RLIMIT_FSIZE, limits.file_size_mb * 1024 * 1024)
     setrl(resource.RLIMIT_NOFILE, limits.open_files)
     setrl(resource.RLIMIT_CORE, 0)                # дампы ядра нам не нужны
+    # При core_pattern с обработчиком через канал Linux игнорирует RLIMIT_CORE.
+    # Пока WSL снимает такой дамп, родитель может принять уже упавший процесс
+    # за зависший и вернуть тайм-аут вместо причины завершения.
+    import ctypes
+
+    prctl = getattr(ctypes.CDLL(None), "prctl", None)
+    if prctl is not None:
+        PR_SET_DUMPABLE = 4
+        prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
 
 
 def _block_network() -> None:
