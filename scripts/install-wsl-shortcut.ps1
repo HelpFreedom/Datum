@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidatePattern('\A[^"%\\\x00-\x1F]+\z')]
+    [ValidatePattern('\A[^"%\\\s\x00-\x1F]+\z')]
     [string] $Distribution,
 
     [Parameter(Mandatory)]
@@ -17,7 +17,8 @@ if ($Launch) {
     try {
         $start = New-Object System.Diagnostics.ProcessStartInfo
         $start.FileName = $wsl
-        $start.Arguments = '--distribution "{0}" --cd "{1}" --exec /usr/bin/env DATUM_DESKTOP_LAUNCH=1 ./scripts/datum' -f $Distribution, $Checkout
+        # WSL разбирает имя дистрибутива без кавычек, а путь может содержать пробелы.
+        $start.Arguments = '--distribution {0} --cd "{1}" --exec /usr/bin/env DATUM_DESKTOP_LAUNCH=1 ./scripts/datum' -f $Distribution, $Checkout
         $start.UseShellExecute = $false
         $start.CreateNoWindow = $true
         $start.RedirectStandardInput = $true
@@ -34,6 +35,7 @@ if ($Launch) {
             }
             if ($process.ExitCode -ne 0) {
                 $details = ($stderr.Result + [Environment]::NewLine + $stdout.Result).Trim()
+                if ($details.Contains([char] 0)) { $details = '' }
                 throw "WSL завершилась с кодом $($process.ExitCode).`n$details"
             }
         } finally {
@@ -42,7 +44,7 @@ if ($Launch) {
     } catch {
         $shell = New-Object -ComObject WScript.Shell
         $message = "Datum не запустился.`n$($_.Exception.Message)`nЖурнал окна в Linux: ~/.local/state/datum/window.log"
-        $shell.Popup($message, 0, 'Datum', 16) | Out-Null
+        $shell.Popup($message, 10, 'Datum', 16) | Out-Null
         exit 1
     }
     return
