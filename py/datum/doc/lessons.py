@@ -182,8 +182,7 @@ def read(*, file: Path | None = None) -> list[Lesson]:
 def add(*, project: str, part: str, outcome: str, text: str, material: str = "",
         printer: str = "", print_up: str = "", sign: str = "", args: dict | None = None,
         now: _dt.datetime | None = None, file: Path | None = None) -> Lesson:
-    import fcntl
-
+    from datum.doc.file_lock import exclusive_lock
     from datum.doc.params_edit import write_atomically
 
     if outcome not in OUTCOMES:
@@ -197,21 +196,16 @@ def add(*, project: str, part: str, outcome: str, text: str, material: str = "",
     clean = _checked_args(sign, args) if sign else {}
     moment = now or _dt.datetime.now()
     file = file or path()
-    file.parent.mkdir(parents=True, exist_ok=True)
     # Базу пишут разные проекты и разные процессы: читать и писать — под замком.
-    with open(file.with_name(file.name + ".lock"), "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            have = read(file=file)
-            lesson = Lesson(id=f"{moment:%Y%m%d-%H%M%S}-{len(have) + 1}",
-                            date=f"{moment:%Y-%m-%d}", project=project, part=part,
-                            outcome=outcome, text=flat, material=material, printer=printer,
-                            print_up=print_up, sign=sign, args=clean)
-            write_atomically(file, json.dumps([asdict(x) for x in [*have, lesson]],
-                                              ensure_ascii=False, indent=1) + "\n")
-            return lesson
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    with exclusive_lock(file.with_name(file.name + ".lock")):
+        have = read(file=file)
+        lesson = Lesson(id=f"{moment:%Y%m%d-%H%M%S}-{len(have) + 1}",
+                        date=f"{moment:%Y-%m-%d}", project=project, part=part,
+                        outcome=outcome, text=flat, material=material, printer=printer,
+                        print_up=print_up, sign=sign, args=clean)
+        write_atomically(file, json.dumps([asdict(x) for x in [*have, lesson]],
+                                          ensure_ascii=False, indent=1) + "\n")
+        return lesson
 
 
 def matching(solid_on_bed, *, material: str = "", lessons: list[Lesson] | None = None

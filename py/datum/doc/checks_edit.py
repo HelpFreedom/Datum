@@ -103,23 +103,18 @@ def update(root, change):
     другую) обе отвечали «готово», а проверки первой возвращались в файл со
     ссылкой на уже удалённую деталь (аудит 2026-11-21, §6.3.9). Файл читается
     ЗАНОВО под блокировкой, а не из открытого проекта."""
-    import fcntl
     from pathlib import Path
 
+    from datum.doc.file_lock import exclusive_lock
     from datum.doc.params_edit import write_atomically
 
     root = Path(root)
     path = root / "checks" / "checks.yaml"
     lock_path = root / ".datum" / "checks.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            text = path.read_text(encoding="utf-8") if path.is_file() else ""
-            new = change(text)
-            if new is not None and new != text:
-                path.parent.mkdir(exist_ok=True)
-                write_atomically(path, new)          # недописанный — хуже прежнего
-            return new
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    with exclusive_lock(lock_path):
+        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        new = change(text)
+        if new is not None and new != text:
+            path.parent.mkdir(exist_ok=True)
+            write_atomically(path, new)          # недописанный — хуже прежнего
+        return new

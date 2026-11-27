@@ -153,22 +153,15 @@ def update(root: str | Path, change) -> dict[str, Placement]:
     Прежде каждая операция брала положения из открытого проекта, меняла свою
     деталь и писала файл целиком: две одновременные правки (окно тащит одну
     деталь, агент ставит другую) обе отвечали «готово», а в файле оставалась
-    одна (найдено обзором). Блокировка — `fcntl.flock` на `.datum/
-    placement.lock`, и читается файл ЗАНОВО под ней, а не из кеша проекта.
+    одна (найдено обзором). Блокировка — на файле `.datum/placement.lock`, и читается файл ЗАНОВО под ней, а не из кеша проекта.
     """
-    import fcntl
+    from datum.doc.file_lock import exclusive_lock
 
-    lock_path = Path(root) / ".datum" / "placement.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            current = load(root)
-            new = change(dict(current))
-            save(root, new)
-            return new
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    with exclusive_lock(Path(root) / ".datum" / "placement.lock"):
+        current = load(root)
+        new = change(dict(current))
+        save(root, new)
+        return new
 
 
 def centre_of(solid) -> tuple[float, float, float]:
