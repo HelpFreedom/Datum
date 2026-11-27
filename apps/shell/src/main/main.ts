@@ -353,24 +353,29 @@ ipcMain.handle("datum:layout:load", () => loadLayout());
 ipcMain.on("datum:layout:save", (_event, data: unknown) => saveLayout(data));
 
 // ------------------------------------------------------------- терминал
-// Мост до системного `claude`. Поверхность узкая нарочно: окно исполняет код,
+// Мост до системного агента. Поверхность узкая нарочно: окно исполняет код,
 // собранный из исходников проекта, и чем меньше ему доступно, тем меньше цена
 // ошибки в нём.
-ipcMain.handle("datum:agent:start", (_event, size: { cols: number; rows: number }) => {
+ipcMain.handle("datum:agent:start", (_event, size: { cols: number; rows: number; kind?: unknown }) => {
   if (!handshake) return { ok: false, error: "сервер ещё не готов" };
+  const kind = size.kind ?? "claude";
+  if (kind !== "claude" && kind !== "codex") {
+    return { ok: false, error: "неизвестный агент" };
+  }
   return agent.start(
     { port: handshake.port, token: handshake.token, project: handshake.project },
     size,
     (chunk) => win?.webContents.send("datum:agent:data", chunk),
     (code) => win?.webContents.send("datum:agent:exit", code),
+    kind,
   );
 });
-ipcMain.handle("datum:agent:status", () => ({ running: agent.running }));
+ipcMain.handle("datum:agent:status", () => ({ running: agent.running, kind: agent.kind }));
 // Сколько контекста занято у идущего `claude` — число для строки состояния
 // (из журнала его сессии; текст разговора окну не отдаётся). Минута запаса на
 // расхождение часов записи: журнал, не тронутый с запуска, — прошлая сессия.
 ipcMain.handle("datum:agent:context", () => {
-  if (!agent.running || !handshake) return null;
+  if (agent.kind !== "claude" || !handshake) return null;
   return contextSize(handshake.project, agent.startedAt - 60_000);
 });
 ipcMain.on("datum:agent:write", (_event, data: string) => agent.write(data));
@@ -432,7 +437,7 @@ async function createWindow(): Promise<void> {
       fatal("Окно падает раз за разом",
         `процесс отрисовки убит ${crashes.length} раза за ${CRASH_WINDOW_MS / 60_000} мин ` +
         `(${details.reason}). Проект и разговор агента сохранены на диске: откройте ` +
-        `проект снова, а в Claude Code — /resume.`);
+        `проект снова и возобновите сеанс командой вашего агента.`);
       return;
     }
     setTimeout(() => {
@@ -484,9 +489,9 @@ async function createWindow(): Promise<void> {
     const answer = dialog.showMessageBoxSync(win, {
       type: "question",
       title: "Datum",
-      message: "Claude Code ещё работает",
-      detail: "Закрытие окна остановит его. Проект останется на диске, разговор " +
-        "можно будет продолжить командой /resume.",
+      message: `${agent.kind === "codex" ? "Codex" : "Claude Code"} ещё работает`,
+      detail: "Закрытие окна остановит агента. Проект останется на диске. " +
+        "Разговор можно продолжить командой возобновления сеанса.",
       buttons: ["Закрыть и остановить", "Остаться"],
       defaultId: 1,
       cancelId: 1,

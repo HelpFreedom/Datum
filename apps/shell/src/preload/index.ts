@@ -5,6 +5,7 @@
  * проекта, и чем меньше ему доступно, тем меньше цена ошибки в нём.
  */
 import { contextBridge, ipcRenderer } from "electron";
+import type { AgentKind, StartResult } from "../main/agent";
 
 /**
  * Вызов открытия проекта с вестью «открываю <имя>»: проект открывается в том
@@ -74,13 +75,11 @@ contextBridge.exposeInMainWorld("datum", {
    * труба до процесса, который живёт в главном процессе оболочки.
    */
   agent: {
-    /** backlog — хвост вывода, если claude уже работал (окно перезагрузилось). */
-    start: (cols: number, rows: number) =>
-      ipcRenderer.invoke("datum:agent:start", { cols, rows }) as Promise<
-        { ok: true; backlog?: string } | { ok: false; error: string }
-      >,
-    /** Работает ли claude — чтобы перезагруженное окно подключилось к нему. */
-    status: () => ipcRenderer.invoke("datum:agent:status") as Promise<{ running: boolean }>,
+    /** backlog — хвост вывода, если агент уже работал (окно перезагрузилось). */
+    start: (cols: number, rows: number, kind?: AgentKind) =>
+      ipcRenderer.invoke("datum:agent:start", { cols, rows, kind }) as Promise<StartResult>,
+    /** Активный агент для восстановления терминала после перезагрузки окна. */
+    status: () => ipcRenderer.invoke("datum:agent:status") as Promise<{ running: boolean; kind: AgentKind | null }>,
     /** Размер контекста идущего claude (токенов на последнем ходе) или null. */
     context: () =>
       ipcRenderer.invoke("datum:agent:context") as Promise<{ tokens: number; at: number } | null>,

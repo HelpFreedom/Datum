@@ -51,6 +51,7 @@ ui: build
 	DATUM_SCENARIO=scripts/ui/show.cjs DATUM_OUT=$(SCRATCH)/show.png npm start -- $(SCRATCH)/latch-show
 	rm -rf $(SCRATCH)/claude-config
 	CLAUDE_CONFIG_DIR=$(SCRATCH)/claude-config DATUM_CLAUDE=$(CURDIR)/scripts/ui/fake-claude.sh DATUM_SCENARIO=scripts/ui/crash.cjs npm start -- examples/latch
+	DATUM_CODEX=$(CURDIR)/scripts/ui/fake-codex DATUM_SCENARIO=scripts/ui/codex.cjs npm start -- examples/latch
 	rm -rf $(SCRATCH)/latch-death && cp -r examples/latch $(SCRATCH)/latch-death && rm -rf $(SCRATCH)/latch-death/.datum
 	DATUM_SCENARIO=scripts/ui/server_death.cjs npm start -- $(SCRATCH)/latch-death
 	rm -rf $(SCRATCH)/projects && mkdir -p $(SCRATCH)/projects/datum/untitled
