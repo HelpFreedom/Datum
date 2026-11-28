@@ -126,18 +126,27 @@ from contextlib import contextmanager  # noqa: E402
 
 @contextmanager
 def _serving(tmp_path, monkeypatch):
-    import shutil
     import subprocess
     import sys
     import time
     from pathlib import Path
+
+    from conftest import copy_project
 
     runtime = tmp_path / "run"
     runtime.mkdir()
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
     monkeypatch.delenv(HANDSHAKE_ENV, raising=False)
     project = tmp_path / "latch"
-    shutil.copytree(Path(__file__).resolve().parents[3] / "examples" / "latch", project)
+    # Копия БЕЗ .datum — через общий `copy_project`, как в остальных тестах.
+    # Пример `latch` в репозитории бывает ОТКРЫТ окном Datum, и тогда его
+    # `.datum/cache/index.sqlite` живой: сервер окна пишет в базу, пока идёт
+    # копирование. `copytree` без исключений снимал файл на середине записи —
+    # проверено, такие копии приходят битыми (10 из 30 под записью), а битая
+    # страница даёт `DatabaseError: database disk image is malformed` на
+    # `part_build`. Заодно копия перестаёт быть «тёплой»: тест проверяет
+    # маршрут вызова, а не унаследованный кеш.
+    copy_project(Path(__file__).resolve().parents[3] / "examples" / "latch", project)
     hs = tmp_path / "hs.json"
     env = {**os.environ, "XDG_RUNTIME_DIR": str(runtime)}
     proc = subprocess.Popen([sys.executable, "-m", "datum.cli", "serve", str(project),

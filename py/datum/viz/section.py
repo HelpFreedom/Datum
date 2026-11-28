@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from PIL import Image, ImageDraw, ImageFont
@@ -34,6 +35,11 @@ DIM = (125, 132, 146)
 BAD = (229, 140, 140)
 
 _FONT_PATHS = (
+    # Встроенный: он есть всегда и одинаков везде, поэтому картинки совпадают
+    # от машины к машине. Прежде список начинался с путей Debian — на macOS и
+    # в любом другом месте брался запасной шрифт Pillow, мелкий и без
+    # кириллицы, и подписи на сечениях рисовались не тем, чем задумано.
+    str(Path(__file__).resolve().parent.parent / "assets" / "fonts" / "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",

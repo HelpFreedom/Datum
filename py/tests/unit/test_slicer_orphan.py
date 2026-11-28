@@ -61,18 +61,41 @@ def test_the_slicer_dies_with_the_worker_that_was_killed(tmp_path):
 def test_a_finished_run_leaves_no_guard_behind(tmp_path):
     from datum.io import slicer
 
-    before = set(os.listdir("/proc"))
+    before = _guard_pids()
     done = slicer._run([sys.executable, "-c", "print('ok')"], tmp_path, 30)
     assert done.returncode == 0 and b"ok" in done.stdout
     time.sleep(0.3)
-    mine = []
-    for pid in set(os.listdir("/proc")) - before:
-        if not pid.isdigit():
-            continue
-        try:
-            cmd = Path(f"/proc/{pid}/cmdline").read_bytes()
-        except OSError:
-            continue
-        if b"os.killpg(group" in cmd:
-            mine.append(pid)
-    assert not mine, "сторож обязан уйти вместе с отработавшим слайсером"
+    mine = _guard_pids() - before
+    assert not mine, f"сторож обязан уйти вместе с отработавшим слайсером: {mine}"
+
+
+#: Строка, по которой узнаётся сторож слайсера: он содержит её в своей
+#: командной строке (`datum/io/slicer.py`).
+_GUARD_MARK = "os.killpg(group"
+
+
+def _guard_pids() -> set[int]:
+    """Живые сторожа слайсера. Linux — по `/proc`, macOS — через `ps`.
+
+    `/proc` есть только в Linux, а прежняя проверка читала его безусловно:
+    на macOS тест падал с FileNotFoundError, ничего не проверив.
+    """
+    if os.path.isdir("/proc"):
+        pids = set()
+        for name in os.listdir("/proc"):
+            if not name.isdigit():
+                continue
+            try:
+                cmd = Path(f"/proc/{name}/cmdline").read_bytes()
+            except OSError:
+                continue
+            if _GUARD_MARK.encode() in cmd:
+                pids.add(int(name))
+        return pids
+    out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+    pids = set()
+    for line in out.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        if _GUARD_MARK in cmd and pid.isdigit():
+            pids.add(int(pid))
+    return pids

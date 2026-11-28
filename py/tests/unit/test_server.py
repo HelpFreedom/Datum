@@ -660,7 +660,6 @@ def test_an_edit_on_disk_reaches_the_window(tmp_path):
                 "value: 0.30", "value: 0.25"), encoding="utf-8")
             (root / ".datum").mkdir(exist_ok=True)
             (root / ".datum" / "мусор.json").write_text("{}", encoding="utf-8")
-            event = ws.receive_json()
             # Первая пачка после подъёма наблюдателя может быть НЕ про нашу
             # правку: FSEvents на macOS отдаёт накопившиеся события каталога
             # разом, и в неё попадает то, что распаковка проекта только что
