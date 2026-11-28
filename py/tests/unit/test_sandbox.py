@@ -30,21 +30,28 @@ def project(latch, tmp_path):
     return dst
 
 
+def _build_body(project: str):
+    """Работа для дочернего процесса — функция МОДУЛЯ, а не замыкание.
+
+    На macOS потомок получается через spawn (fork там ломается после геометрии,
+    см. `BuildWorker._needs_spawn`), а spawn передаёт работу pickle'ом:
+    замыкание он не возьмёт.
+    """
+    import asyncio
+
+    from datum.tools.ops import clear_project_cache, part_build
+
+    clear_project_cache()
+    return ({"status": "ok",
+             "result": asyncio.run(part_build(project=project))}, b"")
+
+
 def build(project, name: str, source: str) -> dict:
     """Положить деталь в проект и собрать её в дочернем процессе."""
     (project / "parts" / f"{name}.py").write_text(source, encoding="utf-8")
 
-    def body():
-        import asyncio
-
-        from datum.tools.ops import clear_project_cache, part_build
-
-        clear_project_cache()
-        return ({"status": "ok",
-                 "result": asyncio.run(part_build(project=str(project)))}, b"")
-
     limits = limits_for({"project": str(project)}, WorkerLimits())
-    outcome = BuildWorker(body, limits=limits).start().wait()
+    outcome = BuildWorker(_build_body, (str(project),), limits=limits).start().wait()
     assert outcome.ok, outcome.message
     return outcome.payload["result"]
 

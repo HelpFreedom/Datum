@@ -181,28 +181,41 @@ def test_cancelling_a_long_job(slow_project):
     """Отмена настоящая: процесс убивается, а не уговаривается."""
     # Сервер открыт на ОДНОМ проекте и чужие в теле запроса отвергает, поэтому
     # медленному проекту — свой сервер.
-    client = TestClient(create_app(slow_project, security=ServerSecurity(token=TOKEN)),
-                        base_url="http://127.0.0.1")
-    r = client.post("/api/jobs", headers=auth(True),
-                    json={"op": "part_build", "args": {"project": str(slow_project)}})
-    job_id = r.json()["job"]
+    #
+    # `with` здесь обязателен, и вот почему (на macOS это был настоящий
+    # ВИС, а не падение). Без него TestClient заводит СВОЮ петлю событий на
+    # каждый запрос и гасит её после ответа (`_portal_factory` в
+    # starlette.testclient), а гашение вызывает
+    # `loop.shutdown_default_executor()` — тот самый join потоков пула. Сборка
+    # же ждёт процесса в `worker.wait()`, запущенном в этом пуле
+    # (`loop.run_in_executor` в jobs.py). Итог: ЛЮБОЙ следующий запрос вставал
+    # ровно на время сборки — при `sleep(30)` в детали это 30 с, а будь сборка
+    # длиннее, ожидание не кончилось бы никогда. `with` держит одну петлю (и
+    # один пул) на весь тест, поэтому отмена доходит до воркера сразу.
+    with TestClient(create_app(slow_project, security=ServerSecurity(token=TOKEN)),
+                    base_url="http://127.0.0.1") as client:
+        r = client.post("/api/jobs", headers=auth(True),
+                        json={"op": "part_build",
+                              "args": {"project": str(slow_project)}})
+        job_id = r.json()["job"]
 
-    for _ in range(100):
-        if client.get(f"/api/jobs/{job_id}", headers=auth()).json()["status"] == "running":
-            break
-        time.sleep(0.05)
+        for _ in range(100):
+            if client.get(f"/api/jobs/{job_id}",
+                          headers=auth()).json()["status"] == "running":
+                break
+            time.sleep(0.05)
 
-    t0 = time.perf_counter()
-    res = client.post(f"/api/jobs/{job_id}/cancel", headers=auth(True)).json()
-    assert res["cancelled"] is True
+        t0 = time.perf_counter()
+        res = client.post(f"/api/jobs/{job_id}/cancel", headers=auth(True)).json()
+        assert res["cancelled"] is True
 
-    for _ in range(200):
-        state = client.get(f"/api/jobs/{job_id}", headers=auth()).json()
-        if state["status"] in ("cancelled", "failed", "done"):
-            break
-        time.sleep(0.05)
-    assert state["status"] == "cancelled", state
-    assert time.perf_counter() - t0 < 15.0, "отмена не должна ждать долго"
+        for _ in range(200):
+            state = client.get(f"/api/jobs/{job_id}", headers=auth()).json()
+            if state["status"] in ("cancelled", "failed", "done"):
+                break
+            time.sleep(0.05)
+        assert state["status"] == "cancelled", state
+        assert time.perf_counter() - t0 < 15.0, "отмена не должна ждать долго"
 
 
 # ------------------------------------------------------------------ объекты
@@ -648,8 +661,22 @@ def test_an_edit_on_disk_reaches_the_window(tmp_path):
             (root / ".datum").mkdir(exist_ok=True)
             (root / ".datum" / "мусор.json").write_text("{}", encoding="utf-8")
             event = ws.receive_json()
-            assert event["t"] == "doc.changed"
-            assert event["paths"] == ["params/base.yaml"], "кеш .datum/ не событие"
+            # Первая пачка после подъёма наблюдателя может быть НЕ про нашу
+            # правку: FSEvents на macOS отдаёт накопившиеся события каталога
+            # разом, и в неё попадает то, что распаковка проекта только что
+            # записала (`parts/*.py`). Ждём пачку, в которой есть наша правка,
+            # а проверяем по всем сразу — так и задумано: кеша `.datum/` в ленте
+            # не должно быть НИ В ОДНОЙ.
+            seen: list[str] = []
+            for _ in range(10):
+                event = ws.receive_json()
+                assert event["t"] == "doc.changed", event
+                seen += event["paths"]
+                if "params/base.yaml" in event["paths"]:
+                    break
+            assert "params/base.yaml" in seen, seen
+            assert not [p for p in seen if p.startswith(".datum/")], \
+                "кеш .datum/ не событие"
 
 
 def test_a_refused_isolated_operation_is_failed_in_the_feed(client):

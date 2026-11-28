@@ -517,6 +517,17 @@ def _read_payload(path: Path) -> tuple[dict, bytes]:
     return payload, data[20 + nb:20 + nb + nm]
 
 
+def _watch_parent_before_setsid(parent_pid: int) -> None:
+    """На macOS родителя проверяем ещё ДО setsid.
+
+    При spawn между «процесс жив» и «поставили сторожа» есть окно, в которое
+    родитель успевает умереть. Заодно это дешёвая проверка на старте, общая с
+    путём fork.
+    """
+    if os.getppid() != parent_pid:
+        os._exit(1)
+
+
 def _die_with_parent(parent_pid: int) -> None:
     """Умереть вместе с родителем.
 
@@ -598,10 +609,21 @@ def _cap_malloc_arenas() -> None:
         pass
 
 
+def _child_main(fn, args: tuple, kwargs: dict, out_path: str,
+                limits: WorkerLimits, parent_pid: int = 0) -> None:
+    """Точка входа для spawn. Отдельная функция: multiprocessing передаёт её
+    по имени, а `_child` в модуле есть всегда."""
+    _child(fn, args, kwargs, out_path, limits, parent_pid)
+
+
 def _child(fn, args: tuple, kwargs: dict, out_path: str,
            limits: WorkerLimits, parent_pid: int = 0) -> None:
     """Точка входа дочернего процесса. Возврата отсюда нет — только os._exit."""
     code = 0
+    if parent_pid:
+        # Убийство группы — до setsid: иначе группа своя и сигнал отмены
+        # из родителя до нас уже не дойдёт (spawn стартует в его группе).
+        _watch_parent_before_setsid(parent_pid)
     try:
         os.setsid()                   # своя группа: убить можно целиком
     except OSError:                   # pragma: no cover
@@ -694,6 +716,9 @@ class BuildWorker:
         # смерть у предела памяти отличается от падения ядра.
         self.peak_vsize_mb = 0.0
         self._inherited_mb = 0.0
+        #: Процесс multiprocessing при запуске через spawn (на macOS). Нужен,
+        #: чтобы никто не считал его чужим и не оставил зомби.
+        self._mp_proc = None
 
     def __enter__(self) -> "BuildWorker":
         return self
@@ -739,13 +764,89 @@ class BuildWorker:
         self._out = self._dir / "result.bin"
         self._started = time.perf_counter()
         parent = os.getpid()
+        pid = self._spawn(parent)
+        self.pid = pid
+        return self
+
+    def _spawn(self, parent: int) -> int:
+        """Запустить потомка. Возвращает pid.
+
+        На Linux — `fork`: 5 мс против ~0.9 с у spawn, и потомок даром получает
+        уже загруженный стек.
+
+        На macOS `fork` после того, как родитель посчитал хоть одну булеву
+        операцию manifold3d, роняет потомка SIGTRAP (проверено: без вычислений
+        в родителе тот же потомок жив). Причина — пул TBB, заведённый до fork:
+        его потоки и арены в копии адресного пространства не годятся, а
+        переменные TBB_* этого не лечат. Поэтому там потомок — ЧЕСТНЫЙ новый
+        процесс через spawn: он заново импортирует всё и заводит свой пул.
+        Платим ~0.9 с на запуск, зато получаем работающую сборку.
+        """
+        if self._needs_spawn():
+            return self._spawn_clean(parent)
+
         pid = os.fork()
         if pid == 0:
             _child(self.fn, self.args, self.kwargs, str(self._out), self.limits,
                    parent_pid=parent)
             os._exit(99)                          # pragma: no cover — сюда не доходит
-        self.pid = pid
-        return self
+        return pid
+
+    @staticmethod
+    def _needs_spawn() -> bool:
+        """Нужен ли spawn вместо fork. Задаётся один раз на процесс.
+
+        `DATUM_WORKER_SPAWN=1|0` — принудительно (для проверки и обхода).
+        """
+        forced = os.environ.get("DATUM_WORKER_SPAWN")
+        if forced is not None:
+            return forced not in ("0", "", "false")
+        return sys.platform == "darwin"
+
+    def _spawn_clean(self, parent: int) -> int:
+        """Потомок отдельным процессом: fork() + exec за нас делает multiprocessing.
+
+        `spawn` передаёт функцию и аргументы pickle'ом — поэтому работа воркера
+        обязана состоять из пиклящихся объектов.
+
+        Так и есть у настоящих операций: работа — `functools.partial` от функции
+        модуля, аргументы — словари и имена. Но `fork` умеет и замыкания, а
+        `spawn` — нет; поэтому если работа не пиклится, откатываемся на `fork`:
+        это лучше, чем отказ, и честно — замыкание в родителе обычно означает,
+        что геометрия там ещё не считалась, а значит `fork` и не сломается.
+        """
+        import multiprocessing as mp
+        import pickle
+
+        try:
+            pickle.dumps((self.fn, self.args, self.kwargs))
+        except Exception:
+            self._spawn_mode = "fork"
+            pid = os.fork()
+            if pid == 0:
+                _child(self.fn, self.args, self.kwargs, str(self._out), self.limits,
+                       parent_pid=parent)
+                os._exit(99)                      # pragma: no cover
+            return pid
+
+        ctx = mp.get_context("spawn")
+        cfg = ctx.Process(                      # type: ignore[attr-defined]
+            target=_child_main,
+            args=(self.fn, self.args, self.kwargs, str(self._out), self.limits,
+                  parent),
+            daemon=False,
+        )
+        cfg.start()
+        pid = cfg.pid
+        if pid is None:                           # pragma: no cover
+            raise RuntimeError("воркер не запустился")
+        # Объект нужен только чтобы дождаться и не оставить зомби: ждёт `_reap`
+        # по pid, а этот — чтобы multiprocessing не считал процесс своим.
+        self._mp_proc = cfg
+        return pid
+
+    def _spawn_clean_entry(self, *args) -> None:  # pragma: no cover — точка входа
+        _child_main(*args)
 
     def cancel(self) -> None:
         """Отменить: сперва SIGTERM, потом, если не помогло, SIGKILL."""
@@ -753,10 +854,28 @@ class BuildWorker:
         self._signal_group(signal.SIGTERM)
 
     def _signal_group(self, sig: int) -> None:
+        """Послать сигнал потомку — и его группе, если она у него СВОЯ.
+
+        Группа своя только после `setsid()` в потомке. До этого `getpgid(pid)`
+        возвращает группу родителя, и `killpg` по ней бьёт по нам самим: у
+        приложения это гасит окно и сервер, у pytest — весь прогон (поймано на
+        macOS, где spawn стартует в группе родителя и тратит ~1 с на импорт до
+        `setsid`). Поэтому группу проверяем, а не предполагаем.
+        """
         if self.pid is None:
             return
         try:
-            os.killpg(os.getpgid(self.pid), sig)
+            group = os.getpgid(self.pid)
+        except ProcessLookupError:
+            return
+        if group == os.getpgid(0):
+            try:
+                os.kill(self.pid, sig)
+            except ProcessLookupError:
+                pass
+            return
+        try:
+            os.killpg(group, sig)
         except (ProcessLookupError, PermissionError):
             try:
                 os.kill(self.pid, sig)

@@ -57,6 +57,12 @@ def test_memory_limit_is_enforced():
     На macOS `bytearray(N)` страниц не трогает: ядро отдаёт общую нулевую
     страницу, и занятая память почти не растёт. Поэтому там кусок ещё и
     трогается — иначе проверялось бы не то, что сторожит сторож.
+
+    Запас там скромный нарочно. Сторож мерит ЗАНЯТУЮ память, а она упирается
+    не в предел, а в физическую память машины: на 8 ГБ потомок, трогающий
+    сколько угодно страниц, держится около 450 МБ — остальное ядро сжимает и
+    вытесняет. Запас в 512 МБ оказался недостижим, сторож не срабатывал ни
+    разу, и восьмигигабайтное выделение проходило как успешное.
     """
     def job():
         blob = bytearray(8_000_000_000)      # восемь гигабайт при пределе много меньше
@@ -65,7 +71,8 @@ def test_memory_limit_is_enforced():
                 blob[page] = 1
         return ({"status": "ok", "n": len(blob)}, b"")
 
-    limit = int(guard_mb_of(os.getpid())) + 512
+    room = 512 if MEMORY_LIMIT_ENFORCED else 128
+    limit = int(guard_mb_of(os.getpid())) + room
     out = run_in_worker(job, limits=WorkerLimits(memory_mb=limit, wall_seconds=30.0))
     assert out.status in ("error", "killed"), out
     assert "памят" in out.message.lower() or "MemoryError" in out.message
@@ -195,11 +202,17 @@ def test_a_crash_at_the_memory_limit_is_called_lack_of_memory():
     from datum.build.worker import rss_mb_of
 
     if MEMORY_LIMIT_ENFORCED:
-        limit = int(current_vsize_mb()) + 600
+        room = 600
+        limit = int(current_vsize_mb()) + room
     else:
-        # macOS: 520 МБ касания дают рост ~430 МБ (часть страниц разделена с
-        # родителем). Предел впритык к этому и есть «почти до предела».
-        limit = int(rss_mb_of(os.getpid())) + 520
+        # macOS: заказывать «почти до предела» вслепую нельзя. Сколько занятой
+        # памяти даст касание, решает не тест, а сколько её сейчас свободно у
+        # машины: одно и то же касание в 1200 МБ дало от 250 до 460 МБ роста.
+        # Поэтому запас берётся тесный и заведомо достижимый, а потомок сам
+        # меряет свой рост и падает, дойдя до его доли.
+        inherited = rss_mb_of(os.getpid())
+        room = 128
+        limit = int(inherited) + room
 
     def job():
         import mmap
@@ -207,9 +220,18 @@ def test_a_crash_at_the_memory_limit_is_called_lack_of_memory():
         held = mmap.mmap(-1, 520 * 1024 * 1024)   # резерв адресов, без касания
         if not MEMORY_LIMIT_ENFORCED:
             # macOS: резерв адресов памятью не считается, и сторож смотрит на
-            # занятую. Трогаем каждый лист — так потомок и вправду занимает.
-            for page in range(0, len(held), 4096):
-                held[page] = 1
+            # занятую. Трогаем листы, пока рост не дойдёт до доли запаса, — и
+            # НЕ дальше: перейди мы предел, сработал бы сторож, и проверялось
+            # бы опознание смерти сторожа, а не падения у предела.
+            from datum.build.worker import guard_mb_of
+
+            target = 0.9 * room
+            step = 8 * 1024 * 1024
+            for start in range(0, len(held), step):
+                for page in range(start, start + step, 4096):
+                    held[page] = 1
+                if guard_mb_of(os.getpid()) - inherited >= target:
+                    break
         time.sleep(0.3)
         os.kill(os.getpid(), signal.SIGSEGV)
         return ({"status": "ok", "n": len(held)}, b"")
@@ -380,9 +402,19 @@ def test_limit_below_the_interpreter_footprint_is_refused():
     «ниже занятого» был бы ложью — там заведомо проходит и низкий предел.
     """
     if not MEMORY_LIMIT_ENFORCED:
-        out = run_in_worker(_ok, limits=WorkerLimits(memory_mb=64, wall_seconds=10.0,
-                                                     grace_seconds=0.3))
-        assert out.ok, out.message
+        # На macOS низкий предел — не отказ, а решение сторожа. Проверяем
+        # именно отсутствие отказа: запуск состоялся, а чем кончил процесс —
+        # делом сторожа, и «не хватило памяти» тут честный исход, а не ошибка.
+        # Работа — замыкание нарочно: пиклящуюся функцию воркер отдал бы
+        # spawn'у, тот занял бы импортом больше этого предела, а стоял бы ещё
+        # в группе процессов pytest — и SIGTERM сторожа достался бы тестовому
+        # прогону. fork уходит в свою группу до того, как его успеют тронуть.
+        def job():
+            return ({"status": "ok", "answer": 42}, b"\x01\x02")
+
+        out = BuildWorker(job, limits=WorkerLimits(memory_mb=64, wall_seconds=10.0,
+                                                   grace_seconds=0.3)).start().wait()
+        assert out.ok or "не хватило памяти" in out.message, out.message
         return
     with pytest.raises(LimitTooLow, match="ниже того, что уже занимает"):
         BuildWorker(_ok, limits=WorkerLimits(memory_mb=64)).start()
@@ -488,14 +520,21 @@ def test_a_worker_dies_with_its_parent(tmp_path):
     import time
 
     marker = tmp_path / "pid.txt"
+    # Работа — замыкание, и это здесь по делу: пиклящуюся функцию модуля
+    # воркер на macOS отдал бы spawn'у, а тот запускает новый интерпретатор с
+    # `-c` и пытается импортировать `__main__` скрипта — а его нет, и потомок
+    # падал с «Can't get attribute» ещё до записи pid. Замыкание же идёт через
+    # fork и проверяет ровно то, что задумано: умирает ли воркер с родителем.
     script = f"""
 import os, time
 from datum.build.worker import BuildWorker
-def forever():
-    open({str(marker)!r}, "w").write(str(os.getpid()))
-    while True:
-        pass
-BuildWorker(forever).start()
+def make_forever():
+    def forever():
+        open({str(marker)!r}, "w").write(str(os.getpid()))
+        while True:
+            pass
+    return forever
+BuildWorker(make_forever()).start()
 time.sleep(2.0)
 os._exit(0)                      # родитель умирает, не дождавшись
 """
