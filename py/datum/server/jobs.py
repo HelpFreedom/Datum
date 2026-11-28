@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import tempfile
@@ -318,15 +319,20 @@ class _EmitTail:
 
 
 def _job_body(spec: OpSpec, kwargs: dict, emit_path: str | None = None):
-    """Тело для дочернего процесса. Замыкание годится: fork наследует всё."""
+    """Тело для дочернего процесса.
 
-    def body() -> tuple[dict, bytes]:
-        from datum.build.worker import emit_to
-        from datum.tools.ops import clear_project_cache
+    Не замыкание, а `functools.partial` от функции модуля: на macOS потомок
+    получается через spawn (см. `BuildWorker._needs_spawn`), а spawn передаёт
+    работу pickle'ом — замыкание он не возьмёт.
+    """
+    return functools.partial(_run_job_body, spec, kwargs, emit_path)
 
-        emit_to(emit_path)
-        clear_project_cache()          # унаследованным соединением sqlite не пользуемся
-        result = asyncio.run(spec.fn(**kwargs))
-        return ({"status": "ok", "result": result}, b"")
 
-    return body
+def _run_job_body(spec: OpSpec, kwargs: dict, emit_path: str | None) -> tuple[dict, bytes]:
+    from datum.build.worker import emit_to
+    from datum.tools.ops import clear_project_cache
+
+    emit_to(emit_path)
+    clear_project_cache()          # унаследованным соединением sqlite не пользуемся
+    result = asyncio.run(spec.fn(**kwargs))
+    return ({"status": "ok", "result": result}, b"")

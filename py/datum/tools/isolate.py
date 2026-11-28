@@ -28,14 +28,18 @@ DEFAULT_LIMITS = WorkerLimits()
 
 
 def _job(fn: Callable, kwargs: dict):
-    def run() -> tuple[dict, bytes]:
-        from datum.tools.ops import clear_project_cache
+    """Работа для потомка. `functools.partial`, а не замыкание: на macOS потомок
+    получается через spawn (см. `BuildWorker._needs_spawn`), а spawn передаёт
+    работу pickle'ом — замыкание он не возьмёт."""
+    return functools.partial(_run_job, fn, kwargs)
 
-        clear_project_cache()          # см. примечание о sqlite в заголовке модуля
-        result = asyncio.run(fn(**kwargs))
-        return ({"status": "ok", "result": result}, b"")
 
-    return run
+def _run_job(fn: Callable, kwargs: dict) -> tuple[dict, bytes]:
+    from datum.tools.ops import clear_project_cache
+
+    clear_project_cache()          # см. примечание о sqlite в заголовке модуля
+    result = asyncio.run(fn(**kwargs))
+    return ({"status": "ok", "result": result}, b"")
 
 
 def run_isolated(fn: Callable, kwargs: dict, *,

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Инструмент проектирования и прототипирования для 3D-печати в паре с ИИ",
   "scripts": {
-    "start": "electron apps/shell/dist/main/main.js",
+    "start": "bash scripts/run-electron.sh apps/shell/dist/main/main.js",
     "build": "npm run build:ui && npm run build:shell",
     "build:ui": "vite build --config apps/ui/vite.config.ts",
     "build:shell": "tsc -p apps/shell/tsconfig.json",
