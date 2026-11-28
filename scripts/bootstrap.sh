@@ -17,6 +17,10 @@ echo "→ сборка тех двоих, кому скрипты нужны"
 # списка по-прежнему ничего не исполняют.
 npm rebuild --ignore-scripts=false esbuild node-pty
 
+# Готовый spawn-helper (есть только в сборках для macOS и Windows) лежит в
+# пакете без бита исполнения: терминал агента падает с «posix_spawnp failed».
+chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true
+
 # Пересборки под ABI Electron НЕ требуется. node-pty 1.1.0 построен на
 # node-addon-api, то есть на N-API: двоичный интерфейс стабилен, и один и тот
 # же модуль работает и в Node, и в Electron. Проверено: собранный под Node 20
@@ -32,6 +36,7 @@ node node_modules/electron/install.js
 echo "→ проверка"
 node -e "require('./node_modules/esbuild/lib/main.js'); console.log('  esbuild: ок')"
 node -e "require('./node_modules/node-pty'); console.log('  node-pty: ок')"
-test -x node_modules/electron/dist/electron || { echo "  electron: НЕТ бинарника" >&2; exit 1; }
+# Имя бинарника знает сам пакет (path.txt): electron на Linux, Electron.app/… на macOS.
+test -x "node_modules/electron/dist/$(cat node_modules/electron/path.txt)" || { echo "  electron: НЕТ бинарника" >&2; exit 1; }
 echo "  electron: ок"
 echo "готово. Сборка окна: npm run build"

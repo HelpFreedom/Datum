@@ -32,6 +32,7 @@ import pickle
 import resource
 import signal
 import struct
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -52,28 +53,124 @@ class LimitTooLow(ValueError):
 
 def current_vsize_mb() -> float:
     """Виртуальное адресное пространство текущего процесса, МБ."""
+    return vsize_mb_of(os.getpid())
+
+
+def _proc_mb(pid: int) -> tuple[float, float]:
+    """(адресное пространство, занятая память) процесса в МБ; (0, 0) — не прочлось."""
+    if sys.platform == "darwin":
+        return _libproc_mb(pid)
+    return _procfs_vsize_mb(pid), _procfs_rss_mb(pid)
+
+
+def _procfs_vsize_mb(pid: int) -> float:
+    """Linux: `/proc/<pid>/statm`, первое поле — размер в страницах."""
     try:
-        with open("/proc/self/status", encoding="ascii") as f:
-            for line in f:
-                if line.startswith("VmSize:"):
-                    return int(line.split()[1]) / 1024
-    except OSError:                                # pragma: no cover
-        pass
-    return 0.0
+        if pid == os.getpid():
+            with open("/proc/self/status", encoding="ascii") as f:
+                for line in f:
+                    if line.startswith("VmSize:"):
+                        return int(line.split()[1]) / 1024
+        with open(f"/proc/{pid}/statm", encoding="ascii") as f:
+            pages = int(f.read().split()[0])
+        return pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        return 0.0
+
+
+def _procfs_rss_mb(pid: int) -> float:
+    """Linux: `/proc/<pid>/statm`, второе поле — резидентные страницы."""
+    try:
+        if pid == os.getpid():
+            with open("/proc/self/status", encoding="ascii") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) / 1024
+        with open(f"/proc/{pid}/statm", encoding="ascii") as f:
+            pages = int(f.read().split()[1])
+        return pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        return 0.0
+
+
+#: PROC_PIDTASKINFO из libproc; структура proc_taskinfo_t — 96 байт.
+_PROC_PIDTASKINFO = 4
+
+
+def _libproc_mb(pid: int) -> tuple[float, float]:
+    """macOS: `proc_pidinfo` из libproc — поля `virtual_size` и `resident_size`
+    структуры `proc_taskinfo_t`.
+
+    Структуру приходится описывать руками: `ps` — это лишний процесс на каждый
+    опрос в цикле ожидания (20 раз в секунду). Сверено с `ps -o vsz= / rss=`:
+    расхождение меньше 0.1 %.
+
+    ВАЖНО ПРО VSZ НА macOS: интерпретатор с numpy резервирует под 500 ГБ
+    адресного пространства — это пустые резервы, а не память. Поэтому по
+    адресному пространству там нельзя ни сравнивать процессы, ни сторожить
+    предел: сравнимой величиной остаётся только resident_size.
+    """
+    try:
+        import ctypes
+
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        libproc.proc_pidinfo.restype = ctypes.c_int
+        libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                         ctypes.c_void_p, ctypes.c_int]
+
+        class TaskInfo(ctypes.Structure):
+            _fields_ = [("virtual_size", ctypes.c_uint64),
+                        ("resident_size", ctypes.c_uint64),
+                        ("user_time", ctypes.c_uint64),
+                        ("system_time", ctypes.c_uint64),
+                        ("threads_user", ctypes.c_uint64),
+                        ("threads_system", ctypes.c_uint64)] + \
+                       [(f"_pad{i}", ctypes.c_int32) for i in range(12)]
+
+        info = TaskInfo()
+        got = libproc.proc_pidinfo(pid, _PROC_PIDTASKINFO, 0, ctypes.byref(info),
+                                   ctypes.sizeof(TaskInfo))
+        if got <= 0:
+            return 0.0, 0.0
+        return (info.virtual_size / (1024 * 1024),
+                info.resident_size / (1024 * 1024))
+    except Exception:                              # не macOS
+        return 0.0, 0.0
 
 
 def vsize_mb_of(pid: int) -> float:
     """Виртуальное адресное пространство чужого процесса, МБ (0 — не прочлось).
 
-    Из `/proc/<pid>/statm`: первое поле — размер в страницах. Это дешевле
-    разбора `status` и годится для опроса в цикле ожидания.
+    Ноль означает «не прочлось» — вызывающие это учитывают и не принимают ноль
+    за пустой процесс. На macOS величина огромна и сравнивать её не с чем: для
+    предела там берётся `rss_mb_of`.
     """
-    try:
-        with open(f"/proc/{pid}/statm", encoding="ascii") as f:
-            pages = int(f.read().split()[0])
-    except (OSError, ValueError, IndexError):
-        return 0.0
-    return pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    return _proc_mb(pid)[0]
+
+
+def rss_mb_of(pid: int) -> float:
+    """Занятая (резидентная) память чужого процесса, МБ (0 — не прочлось)."""
+    return _proc_mb(pid)[1]
+
+
+def guard_mb_of(pid: int) -> float:
+    """Какую память сторожить у воркера на ЭТОЙ системе, МБ.
+
+    Linux: адресное пространство — его и держит `RLIMIT_AS`, и сторож обязан
+    мерить ту же величину, иначе числа расходятся. macOS: ядро предела не
+    держит вовсе, а VSZ там — пустые резервы на сотни гигабайт; сторож смотрит
+    на реально занятую память.
+    """
+    return rss_mb_of(pid) if sys.platform == "darwin" else vsize_mb_of(pid)
+
+
+#: Умеет ли эта система ограничивать воркеру адресное пространство.
+#:
+#: macOS `setrlimit(RLIMIT_AS)` не применяет («current limit exceeds maximum
+#: limit»), и `RLIMIT_DATA` тоже. Проверено опытом: при пределе 1 ГБ процесс
+#: спокойно выделяет 2 ГБ. Значит, на macOS единственный предел памяти — это
+#: СТОРОЖ по замеру, а не ядро; предупреждать о нём обязан вызывающий.
+MEMORY_LIMIT_ENFORCED = sys.platform != "darwin"
 
 
 def _mb(value: float) -> str:
@@ -286,11 +383,17 @@ class WorkerLimits:
         Подбор происходит на старте воркера, а не при создании этого объекта:
         пределы часто держат в константе модуля, созданной при импорте, когда
         родитель ещё маленький.
+
+        На macOS считается от ЗАНЯТОЙ памяти, а не от адресного пространства:
+        интерпретатор там резервирует сотни гигабайт пустых адресов, и подбор
+        от них дал бы предел, которого на ноутбуке нет ФИЗИЧЕСКИ.
         """
         if self.memory_mb is not None:
             return int(self.memory_mb)
-        occupied = current_vsize_mb()
-        return max(DEFAULT_MEMORY_MB, int(occupied) + self.headroom_mb)
+        if not MEMORY_LIMIT_ENFORCED:
+            occupied = rss_mb_of(os.getpid())
+            return max(DEFAULT_MEMORY_MB, int(occupied) + self.headroom_mb)
+        return max(DEFAULT_MEMORY_MB, int(current_vsize_mb()) + self.headroom_mb)
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +452,8 @@ def _apply_limits(limits: WorkerLimits) -> None:
         except (ValueError, OSError):            # pragma: no cover
             pass                                  # предел недоступен — не повод падать
 
+    # На macOS RLIMIT_AS не ставится (см. MEMORY_LIMIT_ENFORCED): там этот
+    # вызов молча ничего не делает, и память сторожит опрос в `wait`.
     setrl(resource.RLIMIT_AS, limits.memory_limit_mb() * 1024 * 1024)
     setrl(resource.RLIMIT_CPU, limits.cpu_seconds)
     setrl(resource.RLIMIT_FSIZE, limits.file_size_mb * 1024 * 1024)
@@ -431,10 +536,39 @@ def _die_with_parent(parent_pid: int) -> None:
         libc = ctypes.CDLL(None, use_errno=True)
         PR_SET_PDEATHSIG = 1
         libc.prctl(PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0)
-    except Exception:                 # pragma: no cover — не Linux
+    except Exception:
+        # macOS и прочие без prctl. Там роль ядра играет поток-сторож: раз в
+        # полсекунды сверяет родителя и уходит по SIGKILL, если тот умер.
+        # Иначе сборка переживает и `Ctrl-C`, и закрытое окно.
+        if os.getppid() != parent_pid:
+            os._exit(1)
+        _watch_parent_in_thread(parent_pid)
         return
     if os.getppid() != parent_pid:
         os._exit(1)
+
+
+#: Как часто сторож без prctl проверяет, жив ли родитель.
+PARENT_WATCH_SECONDS = 0.5
+
+
+def _watch_parent_in_thread(parent_pid: int) -> None:
+    """Умереть вместе с родителем там, где `PR_SET_PDEATHSIG` нет.
+
+    Поток, а не сигнал: SIGKILL, посланный себе, снимает процесс целиком, и
+    обработчик в Python для этого не нужен. Поток объявлен daemon — он не
+    держит выход.
+    """
+    import threading
+
+    def watch() -> None:
+        while True:
+            time.sleep(PARENT_WATCH_SECONDS)
+            if os.getppid() != parent_pid:
+                os.kill(os.getpid(), signal.SIGKILL)
+                return
+
+    threading.Thread(target=watch, name="datum-parent-watch", daemon=True).start()
 
 
 #: Сколько арен malloc разрешить потомку. См. `_cap_malloc_arenas`.
@@ -583,10 +717,15 @@ class BuildWorker:
 
         # Проверяем ДО fork: иначе потомок умрёт при старте с MemoryError,
         # и понять, что дело в пределе, а не в скрипте детали, будет нельзя.
-        occupied = current_vsize_mb()
+        # На macOS проверять нечего: там ядро предел не держит, и низкий предел
+        # — это не срыв запуска, а решение сторожа (см. `wait`). Базовая линия
+        # там всё равно нужна, но своя: занятая память родителя, с которой
+        # потомок рождается, — иначе рост сверх унаследованного не посчитать.
+        occupied = (rss_mb_of(os.getpid()) if not MEMORY_LIMIT_ENFORCED
+                    else current_vsize_mb())
         self._inherited_mb = occupied           # с этим потомок родится
         resolved = self.limits.memory_limit_mb()
-        if occupied and resolved < occupied + 128:
+        if MEMORY_LIMIT_ENFORCED and occupied and resolved < occupied + 128:
             raise LimitTooLow(
                 f"предел памяти {resolved} МБ ниже того, что уже "
                 f"занимает сам интерпретатор ({occupied:.0f} МБ виртуального "
@@ -647,6 +786,7 @@ class BuildWorker:
         deadline = self._started + self.limits.wall_seconds
         code: int | None = None
         timed_out = False
+        over_memory = False
         polled = 0.0
         while True:
             code = self._reap(block=False)
@@ -655,7 +795,13 @@ class BuildWorker:
             now = time.perf_counter()
             if now - polled >= 0.02:
                 polled = now
-                self.peak_vsize_mb = max(self.peak_vsize_mb, vsize_mb_of(self.pid))
+                self.peak_vsize_mb = max(self.peak_vsize_mb, guard_mb_of(self.pid))
+                # Там, где ядро предел не держит (macOS), держит этот сторож:
+                # процесс, перешедший предел адресного пространства, гасится
+                # здесь — иначе на 8 ГБ ноутбука он забирает машину целиком.
+                if not MEMORY_LIMIT_ENFORCED and self.peak_vsize_mb > self._limit_mb_soft():
+                    over_memory = True
+                    break
             if self._cancelled or now >= deadline:
                 timed_out = timed_out or now >= deadline
                 break
@@ -676,11 +822,22 @@ class BuildWorker:
                 code = self._reap(block=True)
 
         ms = (time.perf_counter() - self._started) * 1000
-        outcome = self._collect(code, ms, timed_out)
+        outcome = self._collect(code, ms, timed_out, over_memory)
         self._cleanup()
         return outcome
 
-    def _collect(self, code: int | None, ms: float, timed_out: bool) -> WorkerOutcome:
+    def _limit_mb_soft(self) -> float:
+        """Предел для сторожа по замеру. Ноль — сторож выключен.
+
+        Запас сверх предела даётся потому, что замер идёт раз в 20 мс: между
+        двумя опросами процесс успевает выделить заметный кусок, и срабатывание
+        ровно на пределе било бы по законной работе вплотную к нему.
+        """
+        limit = self.limits.memory_limit_mb()
+        return limit * 1.1 if limit else 0.0
+
+    def _collect(self, code: int | None, ms: float, timed_out: bool,
+                 over_memory: bool = False) -> WorkerOutcome:
         payload: dict = {}
         mesh = b""
         if self._out is not None and self._out.is_file():
@@ -691,6 +848,16 @@ class BuildWorker:
                            "error": {"reason": "payload", "message": str(e)}}
 
         stage = _read_stage(self._out.with_name("stage.txt") if self._out else None)
+        if over_memory:
+            # Сторож по замеру (macOS): ядро предела не держит, гасили мы.
+            return WorkerOutcome(
+                status="killed", payload=payload, ms=ms, exit_code=code,
+                message=(f"не хватило памяти: процесс дошёл до "
+                         f"{_mb(self.peak_vsize_mb)} МБ занятой памяти "
+                         f"при пределе {_mb(self.limits.memory_limit_mb())} МБ "
+                         f"и был остановлен{stage}. Здесь предел памяти держит "
+                         f"сам Datum (на этой системе ядро его не применяет): "
+                         f"уменьшите сетку, размер скульптуры или запас памяти"))
         if timed_out:
             return WorkerOutcome(
                 status="timeout", payload=payload, ms=ms, exit_code=code,

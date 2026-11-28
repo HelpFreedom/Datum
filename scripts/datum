@@ -12,10 +12,15 @@
 # Ошибку, которую из dmenu не увидеть, показывает уведомление.
 set -euo pipefail
 
+# Терминал внутри Electron-приложения (VS Code, DSH) выставляет ELECTRON_RUN_AS_NODE=1 —
+# тогда Electron работает как обычный Node и окна не даёт.
+unset ELECTRON_RUN_AS_NODE
+
 self=$(readlink -f "${BASH_SOURCE[0]}")
 root=$(cd "$(dirname "$self")/.." && pwd)
 python="$root/.venv/bin/python"
-electron="$root/node_modules/electron/dist/electron"
+# Имя бинарника знает сам пакет (path.txt): electron на Linux, Electron.app/… на macOS.
+electron="$root/node_modules/electron/dist/$(cat "$root/node_modules/electron/path.txt")"
 main="$root/apps/shell/dist/main/main.js"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/datum"
 
@@ -23,13 +28,18 @@ fail() {
   echo "datum: $1" >&2
   if [[ ! -t 2 ]] && command -v notify-send >/dev/null; then
     notify-send -u critical "Datum не запустился" "$1" || true
+  elif [[ ! -t 2 ]] && command -v osascript >/dev/null; then
+    # macOS: тот же смысл — показать причину, когда терминала не видно.
+    osascript -e "display notification \"$1\" with title \"Datum не запустился\"" \
+      >/dev/null 2>&1 || true
   fi
   exit 1
 }
 
 # Архив проекта — окно: распакует его оболочка той же операцией `unpack`.
+# ${1,,} — bash 4, а на macOS системный bash 3.2: расширение приводим сами.
 archive=""
-if [[ $# -gt 0 && -f "$1" && "${1,,}" == *.datum ]]; then
+if [[ $# -gt 0 && -f "$1" && "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" == *.datum ]]; then
   archive=$(readlink -f "$1")
 fi
 
@@ -58,13 +68,18 @@ log="$state/window.log"
 # следующий запуск, и ещё один (идея из cadcraft). Окно, уже работающее,
 # пишет в переименованный файл — его вывод не теряется.
 LOG_MAX=$((4 * 1024 * 1024))
-if [[ -f "$log" ]] && (( $(stat -c %s "$log") > LOG_MAX )); then
+if [[ -f "$log" ]] && (( $(wc -c < "$log") > LOG_MAX )); then
   [[ -f "$state/window.1.log" ]] && mv -f "$state/window.1.log" "$state/window.2.log"
   mv -f "$log" "$state/window.1.log"
 fi
 { echo; echo "=== $(date '+%F %T') datum ${project[*]:-}"; } >>"$log"
 cd "$root"
-setsid -f "$electron" "$main" "${project[@]}" >>"$log" 2>&1 </dev/null
+# setsid есть только в Linux; на macOS — nohup: Electron игнорирует SIGHUP и живёт дальше терминала.
+if command -v setsid >/dev/null; then
+  setsid -f "$electron" "$main" "${project[@]}" >>"$log" 2>&1 </dev/null
+else
+  nohup "$electron" "$main" "${project[@]}" >>"$log" 2>&1 </dev/null &
+fi
 if [[ -t 1 ]]; then
   echo "Datum открывается${project:+: ${project[0]}}. Журнал окна: $log"
 fi

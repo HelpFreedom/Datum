@@ -123,8 +123,10 @@ def font_names(root: str | Path | None = None) -> dict[str, list[str]]:
     return out
 
 
-#: Где искать системные шрифты, если нет fc-list.
-SYSTEM_FONT_DIRS = ("/usr/share/fonts", "/usr/local/share/fonts", "~/.local/share/fonts", "~/.fonts")
+#: Где искать системные шрифты, если нет fc-list. Каталоги macOS — её обычные
+#: места; на Linux их просто нет, и rglob их пропускает.
+SYSTEM_FONT_DIRS = ("/usr/share/fonts", "/usr/local/share/fonts", "~/.local/share/fonts", "~/.fonts",
+                    "/System/Library/Fonts", "/Library/Fonts", "~/Library/Fonts")
 
 
 def system_fonts() -> dict[str, Path]:

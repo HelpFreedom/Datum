@@ -9,12 +9,14 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 
 import pytest
 
-from datum.build.worker import (BuildWorker, LimitTooLow, WorkerLimits, _mb,
-                                current_vsize_mb, run_in_worker, stage)
+from datum.build.worker import (MEMORY_LIMIT_ENFORCED, BuildWorker, LimitTooLow,
+                                WorkerLimits, _mb, current_vsize_mb, guard_mb_of,
+                                run_in_worker, stage)
 
 FAST = WorkerLimits(wall_seconds=20.0, grace_seconds=0.5)
 
@@ -50,12 +52,20 @@ def test_exception_becomes_a_result_not_a_crash():
 
 # ------------------------------------------------------------------ пределы
 def test_memory_limit_is_enforced():
-    """Предел берётся с запасом над уже занятым — иначе сорвётся сам запуск."""
+    """Предел берётся с запасом над уже занятым — иначе сорвётся сам запуск.
+
+    На macOS `bytearray(N)` страниц не трогает: ядро отдаёт общую нулевую
+    страницу, и занятая память почти не растёт. Поэтому там кусок ещё и
+    трогается — иначе проверялось бы не то, что сторожит сторож.
+    """
     def job():
         blob = bytearray(8_000_000_000)      # восемь гигабайт при пределе много меньше
+        if not MEMORY_LIMIT_ENFORCED:
+            for page in range(0, len(blob), 65536):
+                blob[page] = 1
         return ({"status": "ok", "n": len(blob)}, b"")
 
-    limit = int(current_vsize_mb()) + 512
+    limit = int(guard_mb_of(os.getpid())) + 512
     out = run_in_worker(job, limits=WorkerLimits(memory_mb=limit, wall_seconds=30.0))
     assert out.status in ("error", "killed"), out
     assert "памят" in out.message.lower() or "MemoryError" in out.message
@@ -178,13 +188,28 @@ def test_a_crash_at_the_memory_limit_is_called_lack_of_memory():
     Так импорт модели в 1.48 млн треугольников и падал: «упало геометрическое
     ядро», хотя модель была цела, а кончился предел адресного пространства.
     Здесь потомок занимает адреса почти до предела, даёт опросу себя увидеть и
-    падает — сообщение обязано говорить о памяти, а не о ядре."""
-    limit = int(current_vsize_mb()) + 600
+    падает — сообщение обязано говорить о памяти, а не о ядре.
+
+    На macOS предела адресного пространства нет вовсе, поэтому «дойти до
+    предела» там означает занять память; мера — та же, что у сторожа."""
+    from datum.build.worker import rss_mb_of
+
+    if MEMORY_LIMIT_ENFORCED:
+        limit = int(current_vsize_mb()) + 600
+    else:
+        # macOS: 520 МБ касания дают рост ~430 МБ (часть страниц разделена с
+        # родителем). Предел впритык к этому и есть «почти до предела».
+        limit = int(rss_mb_of(os.getpid())) + 520
 
     def job():
         import mmap
 
         held = mmap.mmap(-1, 520 * 1024 * 1024)   # резерв адресов, без касания
+        if not MEMORY_LIMIT_ENFORCED:
+            # macOS: резерв адресов памятью не считается, и сторож смотрит на
+            # занятую. Трогаем каждый лист — так потомок и вправду занимает.
+            for page in range(0, len(held), 4096):
+                held[page] = 1
         time.sleep(0.3)
         os.kill(os.getpid(), signal.SIGSEGV)
         return ({"status": "ok", "n": len(held)}, b"")
@@ -326,8 +351,9 @@ def test_no_temp_files_left_even_when_the_child_is_killed():
     time.sleep(0.2)
     w.cancel()
     assert w.wait().status == "cancelled"
-    with pytest.raises(LimitTooLow):
-        BuildWorker(_ok, limits=WorkerLimits(memory_mb=64)).start()
+    if MEMORY_LIMIT_ENFORCED:
+        with pytest.raises(LimitTooLow):
+            BuildWorker(_ok, limits=WorkerLimits(memory_mb=64)).start()
 
     after = {d for d in os.listdir("/tmp") if d.startswith("datum-worker-")}
     assert not (after - before), f"остались временные каталоги: {after - before}"
@@ -348,7 +374,16 @@ def test_limit_below_the_interpreter_footprint_is_refused():
     1475 МБ виртуального адресного пространства только на загрузку, и потомок
     наследует это при fork. Предел 512 МБ убивал процесс на старте с пустым
     MemoryError, и понять причину было нельзя.
+
+    На macOS отказа нет и быть не может: ядро там адресное пространство не
+    ограничивает вовсе, предел сторожит сам Datum по занятой памяти. Отказ
+    «ниже занятого» был бы ложью — там заведомо проходит и низкий предел.
     """
+    if not MEMORY_LIMIT_ENFORCED:
+        out = run_in_worker(_ok, limits=WorkerLimits(memory_mb=64, wall_seconds=10.0,
+                                                     grace_seconds=0.3))
+        assert out.ok, out.message
+        return
     with pytest.raises(LimitTooLow, match="ниже того, что уже занимает"):
         BuildWorker(_ok, limits=WorkerLimits(memory_mb=64)).start()
 
@@ -358,8 +393,25 @@ def test_current_footprint_is_measurable():
     assert mb > 10, "должно читаться из /proc/self/status"
 
 
+def test_guard_footprint_is_measurable_and_physical():
+    """Величина, которую сторожит предел, читается и на macOS.
+
+    Там `/proc` нет вовсе, а адресное пространство — пустые резервы на сотни
+    гигабайт, которых на ноутбуке физически нет: по ним подбирать предел
+    значило бы выдать его больше, чем есть памяти. Сторож обязан видеть
+    занятую память и видеть её разумной.
+    """
+    from datum.build.worker import guard_mb_of, rss_mb_of
+
+    mb = guard_mb_of(os.getpid())
+    assert mb > 10, "занятая память должна читаться"
+    assert mb < 100_000, f"{mb:.0f} МБ — не занятая память, а резерв адресов"
+    if sys.platform == "darwin":
+        assert abs(rss_mb_of(os.getpid()) - mb) < 1, "на macOS сторож смотрит на RSS"
+
+
 def test_realistic_limit_is_accepted():
-    need = int(current_vsize_mb()) + 512
+    need = int(guard_mb_of(os.getpid())) + 512
     out = run_in_worker(_ok, limits=WorkerLimits(memory_mb=need, wall_seconds=20.0))
     assert out.ok
 
@@ -376,6 +428,14 @@ def test_the_default_limit_is_headroom_above_the_parent(monkeypatch):
     """
     import datum.build.worker as module
 
+    if not MEMORY_LIMIT_ENFORCED:
+        # macOS: подбор идёт от ЗАНЯТОЙ памяти — резервы адресов там в сотни
+        # гигабайт, и предел по ним был бы больше, чем есть в машине.
+        monkeypatch.setattr(module, "rss_mb_of", lambda pid: 8000.0)
+        assert WorkerLimits().memory_limit_mb() == 8000 + WorkerLimits().headroom_mb
+        monkeypatch.setattr(module, "rss_mb_of", lambda pid: 100.0)
+        assert WorkerLimits().memory_limit_mb() == module.DEFAULT_MEMORY_MB
+        return
     monkeypatch.setattr(module, "current_vsize_mb", lambda: 8000.0)
     assert WorkerLimits().memory_limit_mb() == 8000 + WorkerLimits().headroom_mb
     # У маленького родителя работает пол.
@@ -388,6 +448,11 @@ def test_an_explicit_limit_stays_a_hard_ceiling(monkeypatch):
     вызывающего — и заодно обессмыслить проверку «предел слишком мал»."""
     import datum.build.worker as module
 
+    if not MEMORY_LIMIT_ENFORCED:
+        # macOS: низкий предел — не отказ, а решение сторожа. Проверяем, что
+        # заданное число не подменяется подобранным.
+        assert WorkerLimits(memory_mb=64).memory_limit_mb() == 64
+        return
     monkeypatch.setattr(module, "current_vsize_mb", lambda: 8000.0)
     assert WorkerLimits(memory_mb=64).memory_limit_mb() == 64
     with pytest.raises(LimitTooLow):
@@ -400,7 +465,10 @@ def test_the_limit_is_resolved_at_start_not_at_construction(monkeypatch):
     import datum.build.worker as module
 
     limits = WorkerLimits(wall_seconds=20.0, grace_seconds=0.5)   # родитель мал
-    monkeypatch.setattr(module, "current_vsize_mb", lambda: 6000.0)
+    if not MEMORY_LIMIT_ENFORCED:
+        monkeypatch.setattr(module, "rss_mb_of", lambda pid: 6000.0)
+    else:
+        monkeypatch.setattr(module, "current_vsize_mb", lambda: 6000.0)
     worker = BuildWorker(_ok, limits=limits).start()
     try:
         assert worker.limits.memory_mb == 6000 + limits.headroom_mb
@@ -441,13 +509,26 @@ os._exit(0)                      # родитель умирает, не дож�
             os.kill(pid, 0)
         except ProcessLookupError:
             break
-        with open(f"/proc/{pid}/stat") as f:        # зомби без родителя — тоже конец
-            if f.read().split()[2] == "Z":
-                break
+        # Зомби без родителя — тоже конец. `/proc` есть только на Linux; на
+        # macOS состояние процесса читается через `ps`.
+        stat = _process_state(pid)
+        if stat is None or stat.startswith("Z"):
+            break
         time.sleep(0.05)
     else:
         os.kill(pid, 9)
         raise AssertionError("воркер пережил родителя")
+
+
+def _process_state(pid: int) -> str | None:
+    """Состояние процесса одной буквой (`Z` — зомби). None — процесса нет."""
+    proc = f"/proc/{pid}/stat"
+    if os.path.exists(proc):
+        with open(proc) as f:
+            return f.read().split()[2]
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                         capture_output=True, text=True).stdout.strip()
+    return out or None
 
 
 def test_the_worker_yields_the_cpu_to_the_human():
